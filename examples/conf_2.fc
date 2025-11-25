@@ -1,0 +1,7 @@
+{
+    server: {
+        host: "localhost",
+        port: 8080
+    },
+    list_example: { 1, 2, 3 }
+}
