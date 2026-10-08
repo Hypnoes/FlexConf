@@ -1,12 +1,11 @@
 # FlexConf ABNF Grammar Specification
 
-*Version 0.0.1-snapshot*
+*Version 0.0.2-snapshot*
 *Published on November 24, 2025*
 
 ## Introduction
 
 This document provides the formal ABNF (Augmented Backus-Naur Form) grammar for the FlexConf 1.0 specification. The grammar defines the syntax rules for valid FlexConf documents in both indentation mode and bracket mode.
-Although this design has basically taken shape, there are still some details under consideration and it will continue to evolve until it is finally finalized.
 
 ## Core Definitions
 
@@ -45,7 +44,7 @@ bracket-mode = %x7B WSP bracket-document-content WSP %x7D  ; {
 comment = "#" *(%x01-09 / %x0B-0C / %x0E-10FFFF) NEWLINE
 
 key = bare-key / quoted-key
-bare-key = (ALPHA / "_") *(ALPHA / DIGIT / UNDERSCORE / HYPHEN / DOT)
+bare-key = 1*(ALPHA / DIGIT / UNDERSCORE / HYPHEN)
 quoted-key = "`" quoted-key-content "`"
 quoted-key-content = *(%x01-5F / %x61-10FFFF)  ; Any Unicode char except backtick
 
@@ -54,10 +53,9 @@ indentation-key-value-pair = key WSP ":" WSP indentation-value [WSP comment] NEW
 primitive = string / number / boolean / null
 
 indentation-value = primitive / indentation-map / indentation-list
-bracket-value = primitive / bracket-map / bracket-list
 
 string = basic-string / ml-basic-string / literal-string / ml-literal-string
-number = integer / float / hex-int / oct-int / bin-int
+number = integer / float / hex-int / oct-int / bin-int / special-float
 boolean = "true" / "false"
 null = "null"
 ```
@@ -96,7 +94,7 @@ ml-literal-char = *(%x01-09 / %x0B-0C / %x0E-26 / %x28-10FFFF)  ; Any char excep
 integer = [sign] dec-int
 float = [sign] ((dec-int frac) / (dec-int frac exp) / (dec-int exp))
 sign = "+" / "-"
-dec-int = "0" / (nonzero-digit *("_" DIGIT))
+dec-int = "0" / nonzero-digit *(["_"] DIGIT)
 nonzero-digit = %x31-39  ; 1-9
 frac = "." 1*DIGIT
 exp = ("e" / "E") [sign] 1*DIGIT
@@ -194,5 +192,5 @@ This would be parsed according to the `bracket-mode` rules, with the double-brac
 
 ---
 
-Copyright © 2025 Hypnoes Liu. All rights reserved.
+Copyright © 2025 FlexConf Foundation. All rights reserved.
 This specification is licensed under the Creative Commons Attribution-ShareAlike 4.0 International License.

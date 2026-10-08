@@ -1,13 +1,11 @@
 # FlexConf Parser Specification
 
-*Version 0.0.1-snapshot*
+*Version 0.0.2-snapshot*
 *Published on November 24, 2025*
 
 ## 1. Introduction
 
 This document specifies the requirements and architectural design for a compliant FlexConf parser and interpreter. It details the process of converting FlexConf source text into a data structure and vice versa, ensuring consistent behavior across different implementations.
-
-Although this design has basically taken shape, there are still some details under consideration and it will continue to evolve until it is finally finalized.
 
 ## 2. Architecture Overview
 
@@ -48,11 +46,12 @@ The lexer generates a stream of tokens. Common tokens include:
 ### 3.4. Indentation Handling (Indentation Mode)
 
 - The lexer maintains a **Stack of Indentation Levels**, initialized with `[0]`.
-- **Base Unit Detection**: The first line with indentation > 0 defines the `Base Indent Unit`. All subsequent indentations must be a multiple of this unit.
+- **Base Unit Detection**: Before tokenization, the lexer scans the document and computes the `Base Indent Unit` as the greatest common divisor of all non-zero indentation levels (blank and comment-only lines excluded). Every indentation width must be a multiple of this unit.
 - **INDENT Token**: Emitted when the indentation level increases. Push new level to stack.
 - **DEDENT Token**: Emitted when the indentation level decreases. Pop from stack.
   - *Error*: If the new level does not match the level now at the top of the stack, raise an `IndentationError`.
-- **Ignored Lines**: Blank lines and comment-only lines do not generate `INDENT`/`DEDENT` tokens but may generate `NEWLINE` tokens if significant for list separation.
+- **Ignored Lines**: Comment-only lines generate no tokens. Blank lines do not generate `INDENT`/`DEDENT` tokens but must generate `NEWLINE` tokens, since a blank line separates anonymous Map items within a list (see 4.2).
+- **Multi-Level Indent**: When the indentation increases by more than one level at once, the lexer must emit one `INDENT` token per skipped level, so the parser can detect the extra indentation level of anonymous Map items in lists (see 4.2).
 
 ## 4. Parsing Strategy
 
@@ -71,6 +70,8 @@ Per the language design, FlexConf treats Maps and Lists as variations of a gener
   - If a line follows the pattern `key : value`, it is parsed as a Map entry.
   - If a line contains only a `value`, it is parsed as a List item.
   - *Constraint*: A single block cannot mix explicit keys and implicit keys.
+- **List of Anonymous Maps**: If a key's block opens with two consecutive `INDENT` tokens (the first content line sits two indentation levels deeper than the key), the block is a List. The deeper level holds the key-value pairs of anonymous Map items, and consecutive anonymous Maps are separated by exactly one blank line (an extra `NEWLINE` token, see 3.4). Scalar items, if present, appear at the intermediate level.
+- **Duplicate Keys**: A duplicate key within the same Map must raise a `SyntaxError` (see Section 6).
 
 ### 4.3. Bracket Mode Parsing
 
@@ -139,4 +140,4 @@ To support the "Extensibility" roadmap:
 
 ---
 
-Copyright © 2025 Hypnoes Liu. All rights reserved.
+Copyright © 2025 FlexConf Foundation. All rights reserved.
