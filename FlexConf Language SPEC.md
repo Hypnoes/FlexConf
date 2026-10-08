@@ -1,18 +1,23 @@
 # FlexConf 1.0 Specification
 
-*Version 0.0.2-snapshot*
-*Published on November 24, 2025*
+*Version 0.0.3-snapshot*
+*Published on November 24, 2025; revised on October 8, 2026*
 
 ## Overview
 
-FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf supports two syntax modes that are semantically equivalent: indentation mode and bracket mode. Documents may use either syntax mode, but not both within the same document.
+FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf is defined by a **single unified structural model**: every document is a hierarchy of *blocks* of items, and the concrete surface syntax of a document is governed by five configurable **syntax parameters** (§ Syntax Parameters). Two canonical parameter configurations, called **styles**, are predefined:
+
+- the **BRACE** style (braces and commas, JSON-like), and
+- the **INDENT** style (significant indentation and newlines, YAML-like).
+
+Both styles express exactly the same data model, and documents may redefine individual parameters through pragma directives (§ Pragma Directives). A document uses exactly one surface style throughout.
 
 ## Objectives
 
 FlexConf aims to be:
 
 - **Simple**: Minimal syntax with clear rules
-- **Flexible**: Multiple syntax options for different use cases
+- **Flexible**: Configurable surface syntax for different use cases
 - **Unambiguous**: Explicit structure with well-defined parsing rules
 - **Interoperable**: Easy conversion to and from other data formats
 
@@ -21,16 +26,81 @@ FlexConf aims to be:
 ### File Requirements
 
 - FlexConf files must be valid UTF-8 encoded Unicode documents.
-- A FlexConf file must use exclusively one syntax mode (indentation or bracket).
-- Syntax mode is determined by the first non-whitespace, non-comment character in the document:
-  - If the first character is `{`, the document uses bracket mode
-  - Otherwise, the document uses indentation mode
+- A FlexConf document uses exactly one surface style (see § Style Resolution and Surface Detection).
+
+### Syntax Parameters
+
+The surface syntax of a FlexConf document is determined by five parameters:
+
+| Parameter | Default | Legal values | Meaning |
+| --- | --- | --- | --- |
+| `KeyValueSeparator` | `:` | literal string | Separates a key from its value |
+| `ItemSeparator` | `,` | literal string or `<NEWLINE>` | Separates adjacent items within a block |
+| `LeftBrace` | `{` | literal string or `<INDENT>` | Opens a block |
+| `RightBrace` | `}` | literal string or `<DEDENT>` | Closes a block |
+| `CommentMarker` | `#` | `#` or `//` only | Starts a line comment |
+
+**Literal values** are quoted strings of one or more characters.
+
+**Symbolic values** denote virtual tokens produced by line-structure analysis rather than literal characters:
+
+- `<INDENT>`: an increase of one indentation level (conceptually the `<tab>` of the line-oriented surface)
+- `<DEDENT>`: a decrease of one indentation level (conceptually the `<bs>`)
+- `<NEWLINE>`: a line ending
+
+A configuration is **valid** only if:
+
+1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace or string quote characters.
+2. No literal separator is a prefix of `CommentMarker`, and `CommentMarker` is not a prefix of any literal separator.
+3. `<INDENT>` and `<DEDENT>` are bound as a pair: `LeftBrace = <INDENT>` if and only if `RightBrace = <DEDENT>`.
+4. `KeyValueSeparator` and `CommentMarker` are always literal.
+
+An invalid configuration raises an *Invalid Configuration Error* before any parsing takes place.
+
+### Styles
+
+A **style** is a named preset of the syntax parameters.
+
+#### BRACE (default style)
+
+```text
+KeyValueSeparator = ':'
+ItemSeparator     = ','
+LeftBrace         = '{'
+RightBrace        = '}'
+CommentMarker     = '#'
+```
+
+All whitespace (spaces, tabs, newlines) is insignificant between tokens in this style (see § Whitespace Handling).
+
+#### INDENT
+
+`SET STYLE INDENT` is exactly equivalent to the following bindings (`CommentMarker` unchanged):
+
+```text
+LeftBrace         = <INDENT>
+RightBrace        = <DEDENT>
+ItemSeparator     = <NEWLINE>
+KeyValueSeparator = ':'
+```
+
+The INDENT style adds the following rules, which are part of its virtual-token generation:
+
+- Only spaces are used for indentation; tabs are not permitted.
+- The base indent unit is the greatest common divisor of all non-zero indentation levels in the document; every indentation width must be a multiple of it.
+- Each indentation level generates exactly one `<INDENT>` / `<DEDENT>` virtual token, so a jump of two levels produces two consecutive `LeftBrace` tokens (see § Anonymous Maps).
+- A blank line produces an extra `ItemSeparator` token; exactly one blank line separates adjacent anonymous map items (see § Anonymous Maps).
+
+Individual parameters may be overridden on top of a style (e.g. `SET STYLE INDENT` followed by `SET CommentMarker '//'`). Such mixed bindings are legal as long as the final configuration satisfies the validity constraints above, but are unconventional.
 
 ### Comments
 
-- Comments begin with `#` and continue to the end of the line.
+- Comments begin with the effective `CommentMarker` and continue to the end of the line.
 - Comments may appear on their own line or after values on the same line.
-- Comments are ignored by parsers.
+- Comments are ignored by parsers; a comment-only line produces no tokens.
+- The default comment marker is `#`; it can be switched to `//` per document via `#?> SET CommentMarker '//'`.
+- When `//` is the comment marker, a `/` encountered where a token is expected must be the start of a `//` comment; a lone `/` outside a string is a `SyntaxError`. (Bare keys and bare literals never contain `/`, so this introduces no ambiguity.)
+- The pragma prefix `#?>` is fixed meta-syntax and does not change with `CommentMarker` (see § Pragma Directives).
 
 ```flexconf
 # This is a full-line comment
@@ -60,8 +130,8 @@ FlexConf supports the following primitive values:
 
 #### Collections
 
-- **Maps**: Collections of key/value pairs
-- **Lists**: Ordered sequences of values
+- **Maps**: Blocks in which every item has an explicit key.
+- **Anonymous Maps** (traditionally called *lists*): Blocks in which every item is a bare value; see § Anonymous Maps.
 
 ### Keys
 
@@ -69,6 +139,7 @@ FlexConf supports the following primitive values:
 - **Bare identifiers** may only contain ASCII letters, digits, underscores, and hyphens (`A-Za-z0-9_-`).
 - **Quoted identifiers** are enclosed in backticks (`` ` ``) and may contain any valid Unicode character except unescaped backticks.
 - Keys that contain characters not permitted in bare identifiers must be quoted.
+- All keys are strings. A bare key that looks like a number (e.g. `0`, `42`) is the *string* `"0"`, `"42"`.
 
 ```flexconf
 bare_key: "value"
@@ -141,22 +212,29 @@ bool2: false
 nothing: null
 ```
 
+### Block Structure
+
+Every FlexConf document is built from a single abstract block rule, parameterized by the syntax parameters:
+
+```text
+block = LeftBrace *(item ItemSeparator) [item] [ItemSeparator] RightBrace
+item  = key KeyValueSeparator value    ; keyed item
+      / value                          ; anonymous item
+```
+
+- A block whose items are all **keyed** is a **Map**.
+- A block whose items are all **anonymous** is an **Anonymous Map** (see below).
+- Mixing keyed and anonymous items in the same block is invalid.
+- A trailing `ItemSeparator` after the last item is permitted in the BRACE style.
+- An empty block (e.g. `{}`) is ambiguous and defaults to an empty Map.
+
 ### Collections
 
 #### Maps
 
-A map is a collection of key-value pairs. Maps are defined differently in each syntax mode.
+A map is a block of key-value pairs.
 
-**Indentation Mode Maps**:
-
-```flexconf
-server:
-  host: "localhost"
-  port: 8080
-  ssl: false
-```
-
-**Bracket Mode Maps**:
+**BRACE style**:
 
 ```flexconf
 {
@@ -168,31 +246,22 @@ server:
 }
 ```
 
-#### Lists
-
-A list is an ordered sequence of values. Lists are defined differently in each syntax mode.
-
-**Indentation Mode Lists**:
+**INDENT style**:
 
 ```flexconf
-protocols:
-    name: "http"
-    port: 8080
-
-    name: "https"
-    port: 443
-  9000
-  "10010-10015"
+server:
+  host: "localhost"
+  port: 8080
+  ssl: false
 ```
 
-The indented block following a key forms a list when its items are values rather than key-value pairs. Within a list block:
+Note that in the INDENT style the block following a key is delimited by virtual `<INDENT>` / `<DEDENT>` tokens and items are separated by newlines — the abstract block rule is unchanged.
 
-- **Scalar items** appear at the block's first indentation level (the *list level*), one value per line.
-- **Map items** are anonymous maps whose key-value pairs sit one indentation level deeper than the list level. This extra indentation level is required: it distinguishes the key-value pairs of a map item from the key-value pairs of the enclosing map. Consequently, when the first content line of an indented block is two indentation levels deeper than its key (the list level is skipped), the block is a list whose map items occupy the deeper level.
-- **Adjacent map items are separated by exactly one blank line.** The newline after the last key-value pair ends that pair, and the blank line ends the current map item; the next map item begins at the same deeper indentation level.
-- Scalar items and map items may coexist in the same list, as shown in the example above.
+#### Anonymous Maps
 
-Conceptually, a list is a map whose keys are hidden, auto-incrementing integers (`0`, `1`, `2`, ...). The example above is equivalent to:
+An anonymous map is a block whose items are bare values. Semantically it is a map whose keys are implicit strings `"0"`, `"1"`, `"2"`, ..., assigned in order of appearance. This is a **semantic model**, not an implementation requirement: to the host language an anonymous map is simply an ordered sequence (an array), and parsers are expected to construct one directly.
+
+Whether a block is a map or an anonymous map is decided by the **form of its items**, never by key values: an item written with a key makes the block a map; an item written without one makes it anonymous. Since the implicit keys `"0"`, `"1"`, ... coincide with the strings produced by explicit numeric bare keys, the following two documents are equivalent *at the data level*:
 
 ```flexconf
 protocols:
@@ -206,9 +275,27 @@ protocols:
   3: "10010-10015"
 ```
 
-This form illustrates the semantics only: the integer keys are generated by the parser and are never written in documents.
+is the explicit-key form of the anonymous map below — but the first document is a *map* (its keys were written), while the second is an *anonymous map* (its keys are implicit):
 
-**Bracket Mode Lists**:
+```flexconf
+protocols:
+    name: "http"
+    port: 8080
+
+    name: "https"
+    port: 443
+  9000
+  "10010-10015"
+```
+
+**Anonymous map items in the INDENT style**:
+
+- **Scalar items** appear at the block's first indentation level (the *list level*), one value per line.
+- **Map items** are anonymous maps whose key-value pairs sit one indentation level deeper than the list level. This extra indentation level is required: it distinguishes the key-value pairs of a map item from the key-value pairs of the enclosing map. Consequently, when the first content line of an indented block is two indentation levels deeper than its key (two consecutive `<INDENT>` tokens), the block is an anonymous map whose map items occupy the deeper level.
+- **Adjacent map items are separated by exactly one blank line.** The newline after the last key-value pair ends that pair, and the blank line ends the current map item; the next map item begins at the same deeper indentation level.
+- Scalar items and map items may coexist in the same anonymous map, as shown in the example above.
+
+**Anonymous maps in the BRACE style**:
 
 ```flexconf
 {
@@ -221,11 +308,13 @@ This form illustrates the semantics only: the integer keys are generated by the 
 }
 ```
 
+An anonymous map of maps appears as double braces: the outer pair delimits the anonymous map, each inner pair delimits one map item.
+
 #### Mixed Collections
 
-Maps and lists can be nested within each other in both syntax modes.
+Maps and anonymous maps can be nested within each other in every style.
 
-**Indentation Mode Example**:
+**INDENT style example**:
 
 ```flexconf
 application:
@@ -243,7 +332,7 @@ application:
     timeout: 30
 ```
 
-**Bracket Mode Example**:
+**BRACE style example**:
 
 ```flexconf
 {
@@ -268,47 +357,72 @@ application:
 }
 ```
 
-### Syntax Modes
+### Style Resolution and Surface Detection
 
-#### Indentation Mode
+The effective configuration of a document is resolved as follows:
 
-- Uses spaces for indentation (tabs are not permitted).
-- The base indent unit is the greatest common divisor of all non-zero indentation levels in the document.
-- All indent levels must be multiples of the base indent unit.
-- Maps are defined by key-value pairs at the same indentation level.
-- Lists are defined by value only items at the same indentation level.
-- New line separate items within both maps and lists (trailing newline are not permitted).
-- Nested structures are indicated by increased indentation.
+1. **Pragma scanning**: The lexer scans the head of the file for pragma directives (§ Pragma Directives) and applies them in order of appearance. `SET STYLE <name>` binds the four structural parameters atomically; subsequent single-parameter `SET` directives override individual parameters.
+2. **Surface detection**: After skipping whitespace and comments (using the effective `CommentMarker`), the first non-whitespace, non-comment character is examined:
+   - If `LeftBrace` is bound to a literal and the text at that position starts with it, the document uses the **explicit block surface** (physical braces).
+   - Otherwise the document uses the **indentation surface**, which requires `LeftBrace = <INDENT>`; if the effective configuration does not satisfy this, the document is invalid.
+   - As a backward-compatible convenience, a document with **no pragma directives and no explicit configuration** behaves as if its style were auto-detected: a leading `{` selects BRACE, anything else selects INDENT.
+3. **Immutability**: Once the surface is determined, it cannot change within the document. In the indentation surface, encountering a literal `{` or `}` outside a string is a `SyntaxError` (these are the BRACE style's braces, and styles never mix).
 
-#### Bracket Mode
+### Whitespace Handling
 
-- Uses braces `{}` to denote blocks (both Maps and Lists).
-- Maps are distinguished by the presence of key-value pairs: `{ key: value }`.
-- Lists are distinguished by the presence of values only: `{ item1, item2 }`.
-- A List of Maps appears as double braces: `{{ key: value }}` (Outer brace for List, inner for Map).
-- Commas separate items within both maps and lists (trailing commas are permitted).
-- Whitespace is insignificant except within strings.
+**General rule**: a whitespace character is syntactically significant if and only if the effective configuration binds it to a syntactic role. Unbound whitespace is meaningless, and lexers skip it between tokens.
 
-### Conversions Between Modes
+- In the default BRACE style all four structural parameters are literals, so spaces, tabs, and newlines are all insignificant between tokens: documents may be reflowed and aligned freely.
+- `ItemSeparator = <NEWLINE>` makes line endings significant (they *are* the separator), and two consecutive line endings form a blank line, which ends an anonymous map item in the INDENT style.
+- `LeftBrace = <INDENT>` / `RightBrace = <DEDENT>` make the leading whitespace of each line significant (it generates virtual tokens); whitespace within a line remains insignificant.
+- Whitespace inside string values is always significant.
+- Comments run from the `CommentMarker` to the end of the line; comment-only lines produce no tokens. A blank line produces an `ItemSeparator` token when `ItemSeparator = <NEWLINE>`.
 
-- Documents in either syntax mode can be converted to the other mode without loss of information.
+### Conversions Between Styles
+
+- Documents in any style can be converted to another style without loss of information, provided the target style can express the same data.
 - The conversion must preserve all data and structure.
 - Comments may be relocated but must be preserved.
+
+### Pragma Directives
+
+Pragmas start with `#?>` and redefine syntax parameters for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, regardless of the configured `CommentMarker`, because pragmas are processed before the configuration takes effect.
+
+Pragmas must appear at the very beginning of the document, preceded only by whitespace, blank lines, or `#` comments. Two directive forms exist:
+
+```flexconf
+#?> SET STYLE INDENT           " named preset: binds the four structural parameters atomically
+#?> SET STYLE BRACE            " the default style; may be omitted
+#?> SET ItemSeparator ';'      " single-parameter override
+#?> SET LeftBrace '['
+#?> SET RightBrace ']'
+#?> SET LeftBrace <INDENT>     " symbolic values may also be set individually
+#?> SET CommentMarker '//'     " switch the comment marker
+```
+
+Rules:
+
+- Directives apply in order of appearance; later directives override earlier ones.
+- A single-parameter value is either a quoted string or one of the symbolic values `<INDENT>`, `<DEDENT>`, `<NEWLINE>`. `CommentMarker` accepts only `'#'` and `'//'`.
+- `STYLE` accepts the style names `BRACE` and `INDENT` (case-sensitive).
+- An unknown parameter name, unknown style name, or illegal value is a `SyntaxError`.
+- All pragmas take effect before surface detection.
 
 ### Validity Rules
 
 The following conditions make a FlexConf document invalid:
 
-1. **Mixed syntax modes**: Using both indentation and bracket syntax in the same document.
-2. **Invalid indentation**:
-   - Using tabs for indentation in indentation mode
-   - Non-uniform indentation levels (not multiples of base indent)
-3. **Mixed key types in collections**: In a single collection, items must either all have explicit keys or all be list items. Mixing is not permitted.
+1. **Mixed surfaces**: Using literal block braces in the indentation surface, or more than one surface style in the same document.
+2. **Invalid indentation** (INDENT style):
+   - Using tabs for indentation
+   - Non-uniform indentation levels (not multiples of the base indent unit)
+3. **Mixed item forms in a block**: In a single block, items must either all have explicit keys or all be anonymous. Mixing is not permitted.
 4. **Duplicate keys**: A map cannot contain duplicate keys at the same level.
-5. **Incorrect list item separation**:
-   - In indentation mode: missing blank lines between list items or extra blank lines
-   - In bracket mode: missing commas between list items
-6. **Unmatched braces**: In bracket mode, all opening braces must have matching closing braces.
+5. **Incorrect item separation**:
+   - In the INDENT style: missing blank lines between anonymous map items, or extra blank lines
+   - In the BRACE style: missing `ItemSeparator` between items
+6. **Unmatched braces**: Every `LeftBrace` (literal or virtual) must have a matching `RightBrace`.
+7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, illegal `CommentMarker`, ...).
 
 ### Filename Extension
 
@@ -317,31 +431,6 @@ The following conditions make a FlexConf document invalid:
 ### MIME Type
 
 - The MIME type for FlexConf files is `application/flexconf`.
-
-## Extensibility
-
-FlexConf is designed with future extensibility in mind, allowing for customization of syntax elements through special pragma comments at the beginning of the document.
-
-### Pragma Directives
-
-Pragmas start with `#?>` and allow users to redefine core syntax delimiters for the current file. This enables the language to adapt to different preferences or constraints without changing the underlying parser logic.
-
-Examples of potential future directives:
-
-```flexconf
-#?> SET SPLITER ';'
-#?> SET BLOCKIDENTIFER '<' '>'
-```
-
-### Future Customization Goals
-
-The extensibility roadmap includes support for customizing:
-
-- **Block Identifiers**: Replacing curly braces `{}` with square brackets `[]`, parentheses `()`, or other paired sequences. Indentation is treated conceptually as a special kind of bracket.
-- **Key-Value Separators**: Defining alternatives to the colon `:`, such as equals `=`, spaces, or other symbols.
-- **Sequence Separators**: Configuring the item separator, such as using semicolons `;` instead of newlines or commas.
-
-This design ensures that while the core structure (hierarchical key-value pairs) remains consistent, the surface syntax can evolve or be tailored to specific needs.
 
 ## Formal Grammar
 

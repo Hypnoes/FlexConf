@@ -4,10 +4,10 @@ import flexconf
 
 passed = failed = 0
 
-def check(name, text, expected=None, expect_error=None):
+def check(name, text, expected=None, expect_error=None, config=None):
     global passed, failed
     try:
-        result = flexconf.loads(text)
+        result = flexconf.loads(text, config=config)
         if expect_error:
             print(f"FAIL  {name}: expected error {expect_error}, got {result!r}")
             failed += 1
@@ -160,6 +160,87 @@ native = flexconf.Interpreter().to_native(flexconf.parse('server:\n  host: "loca
 check_true("interpreter over parse() output",
            native == {'server': {'host': 'localhost', 'port': 8080}},
            repr(native))
+
+# 14. SET STYLE INDENT: explicitly declared indentation surface parses
+#     identically to the auto-detected default
+check("pragma SET STYLE INDENT", '''#?> SET STYLE INDENT
+server:
+  host: "localhost"
+  port: 8080
+''', expected={'server': {'host': 'localhost', 'port': 8080}})
+
+# 15. Custom ItemSeparator ';' in the BRACE style, with free multi-line
+#     layout (whitespace is insignificant unless bound, Language SPEC)
+check("pragma ItemSeparator ';'", '''#?> SET ItemSeparator ';'
+{
+  a: 1;
+  b: {
+    x: true;
+    y: 2;
+  };
+}
+''', expected={'a': 1, 'b': {'x': True, 'y': 2}})
+
+# 16. Custom LeftBrace/RightBrace '[' ']' + surface detection on '['
+check("pragma LeftBrace '[' RightBrace ']'", '''#?> SET LeftBrace '['
+#?> SET RightBrace ']'
+[ a: 1, b: [ 1, 2 ] ]
+''', expected={'a': 1, 'b': [1, 2]})
+
+# 17. API-level config: KeyValueSeparator '=' in the explicit surface
+check("API Config(key_value_separator='=')",
+      "{a = 1}", config=flexconf.Config(key_value_separator='='),
+      expected={'a': 1})
+
+# 17b. API-level config on the indentation surface (style_indent override)
+check("API style_indent(key_value_separator='=')",
+      "a = 1\n", config=flexconf.Config.style_indent(key_value_separator='='),
+      expected={'a': 1})
+
+# 18. CommentMarker '//': '//' comments are ignored; '#' is no longer a comment
+check("pragma CommentMarker '//'", '''#?> SET CommentMarker '//'
+{
+  a: 1, // trailing comment
+  // full-line comment
+  b: 2
+}
+''', expected={'a': 1, 'b': 2})
+check("'#' rejected when CommentMarker is '//'",
+      "#?> SET CommentMarker '//'\n{ a: 1 # oops\n}\n",
+      expect_error="Unexpected '#'")
+
+# 19. Invalid configurations and pragmas are rejected
+def check_raises(name, fn, expect_error):
+    global passed, failed
+    try:
+        fn()
+        print(f"FAIL  {name}: expected error {expect_error}, no error raised")
+        failed += 1
+    except Exception as e:
+        if expect_error in str(e):
+            print(f"PASS  {name}: raised {e}")
+            passed += 1
+        else:
+            print(f"FAIL  {name}: unexpected {type(e).__name__}: {e}")
+            failed += 1
+
+check_raises("Config conflict: ItemSeparator ':' vs KeyValueSeparator ':'",
+             lambda: flexconf.Config(item_separator=':'),
+             "Invalid configuration")
+check_raises("Config conflict: unpaired <INDENT>",
+             lambda: flexconf.Config(left_brace=flexconf.INDENT),
+             "Invalid configuration")
+check_raises("Config conflict: illegal CommentMarker",
+             lambda: flexconf.Config(comment_marker=';'),
+             "Invalid configuration")
+check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
+      expect_error="Unknown style 'YAML'")
+check("illegal pragma CommentMarker rejected",
+      "#?> SET CommentMarker ';'\n{}\n",
+      expect_error="Invalid configuration")
+check("indent doc rejected when pragmas declare literal braces",
+      "#?> SET ItemSeparator ';'\nserver:\n  a: 1\n",
+      expect_error="SET STYLE INDENT")
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
