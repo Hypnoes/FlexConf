@@ -23,7 +23,8 @@ Although this design has basically taken shape, there are still some details und
 | `FlexConf Language SPEC.md` | Human-readable narrative specification for language users. |
 | `FlexConf ABNF Grammar SPEC.md` | Machine-oriented ABNF grammar capturing the full syntax. |
 | `FlexConf Parser SPEC.md` | Architectural requirements for compliant parser implementations. |
-| `python/` | Minimal Python lexer/parser (`flexconf.py`) with CLI entry point for experimentation. |
+| `flexconf.py` | Python reference implementation: lexer, parser, AST, and interpreter, with a demo entry point. |
+| `test_flexconf.py` | Self-contained test script (16 checks) covering both syntax modes and the AST layer. |
 | `examples/` | Sample `.fc` files demonstrating indentation (`conf_1.fc`) and bracket (`conf_2.fc`) modes. |
 
 ---
@@ -82,45 +83,28 @@ Consult this spec before porting the parser to new languages or extending the re
 
 ## Python Reference Parser
 
-The `python/flexconf.py` module illustrates the full pipeline and exposes importable entry points you can reuse in other projects:
+The `flexconf.py` module illustrates the full pipeline and exposes importable entry points you can reuse in other projects:
 
 - `TokenType` and `Token` define the primitive and structural vocabulary consumed throughout the parser.
 - `Lexer` implements indentation stacks, comment skipping, and bracket-mode guards exactly as described in the specs.
-- `Parser` turns the token stream into Python dict/list structures via `_parse_block`, `_finish_map`, and `_finish_list`.
-- `loads` and `load` mirror Python’s `json` API and provide the recommended interface for libraries.
-- The `if __name__ == "__main__":` harness parses `examples/conf_1.fc` (indentation mode) and `examples/conf_2.fc` (bracket mode) for quick smoke tests.
+- `Parser` turns the token stream into an AST of `MapNode`, `ListNode`, and `ScalarNode` objects (each carrying line/column info) via `_parse_block`, `_finish_map`, and `_finish_list`.
+- `Interpreter` walks the AST and produces native Python dict/list structures.
+- `parse` returns the AST for tooling; `loads` and `load` mirror Python’s `json` API and provide the recommended interface for libraries.
+- The `if __name__ == "__main__":` harness parses built-in indentation-mode and bracket-mode samples for a quick smoke test.
 
 Run the script directly to see the demonstration output:
 
-```FlexConf/python/flexconf.py#L454-468
-if __name__ == "__main__":
-    try:
-        # Test Indentation Mode
-        indent_code = Path("examples/conf_1.fc").read_text()
-        print("--- Indentation Mode ---")
-        print(loads(indent_code))
-
-        print()
-        # Test Bracket Mode
-        bracket_code = Path("examples/conf_2.fc").read_text()
-        print("--- Bracket Mode ---")
-        print(loads(bracket_code))
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
+```bash
+python flexconf.py
 ```
 
 Or import it programmatically:
 
-```FlexConf/python/flexconf.py#L443-450
-def loads(text: str):
-    lexer = Lexer(text)
-    tokens = lexer.tokenize()
-    parser = Parser(tokens)
-    return parser.parse()
+```python
+import flexconf
 
-def load(fp: io.TextIOBase):
-    return loads(fp.read())
+data = flexconf.loads(text)  # str -> native Python objects
+tree = flexconf.parse(text)  # str -> AST (MapNode / ListNode / ScalarNode)
 ```
 
 Use this implementation as a learning aid or lightweight tooling foundation; it intentionally prioritizes clarity over micro-optimizations and is provided strictly as a demonstration reference, not production-ready code.
@@ -132,7 +116,7 @@ Use this implementation as a learning aid or lightweight tooling foundation; it 
 The `examples/` directory contains two canonical files:
 
 1. `conf_1.fc` – indentation-mode map plus list demonstrating nested structures and list semantics driven by blank-line separation:
-```FlexConf/examples/conf_1.fc#L1-11
+```
 server:
     host: "localhost"
     port: 8080
@@ -147,7 +131,7 @@ list_example:
 ```
 
 2. `conf_2.fc` – bracket-mode equivalent showing explicit braces and commas for the same data:
-```FlexConf/examples/conf_2.fc#L1-7
+```
 {
     server: {
         host: "localhost",
@@ -164,9 +148,10 @@ Diffing these files highlights the one-to-one correspondence between syntaxes, m
 ## Getting Started
 
 1. **Read the specs** to understand the language guarantees.
-2. **Run the Python parser** against the provided examples or your own `.fc` files.
-3. **Experiment with pragma directives** (future roadmap) by extending the lexer configuration.
-4. **Build your own parser** using the ABNF and parser spec as guides.
+2. **Run the Python demo** (`python flexconf.py`) or parse your own `.fc` files with `flexconf.loads(...)`.
+3. **Run the test suite** (`python test_flexconf.py`) to see the supported behaviors exercised end to end.
+4. **Experiment with pragma directives** (future roadmap) by extending the lexer configuration.
+5. **Build your own parser** using the ABNF and parser spec as guides.
 
 ---
 
