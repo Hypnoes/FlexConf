@@ -38,7 +38,7 @@ FlexConf documents are UTF-8 encoded. Every document is a hierarchy of **blocks*
 
 Across all styles, FlexConf supports:
 
-- Primitive types: strings (basic, literal, multi-line), numbers (dec/hex/oct/bin, floats, special floats), booleans, null, and date/time literals — `@`-sigiled RFC 3339 profiles such as `@1979-05-27T07:32:00Z`, `@1979-05-27`, or `@07:32:00`, mapping to native date/time types.
+- Primitive types: strings (basic, literal, multi-line), numbers (dec/hex/oct/bin, floats, special floats), booleans, null, and date/time literals — `@`-sigiled RFC 3339 profiles such as `@1979-05-27T07:32:00Z`, `@1979-05-27 07:32:00`, `@1979-05-27`, or `@07:32:00`, mapping to native date/time types.
 - Structured types: maps (explicit keys) and anonymous maps — traditionally called lists — whose implicit keys are the strings `"0"`, `"1"`, ... assigned in order of appearance. Both nest arbitrarily.
 - Line comments introduced by `#`.
 - Pragma directives (`#?> SET ...`) that customize any syntax parameter per file, e.g. `#?> SET ItemSeparator ';'` or `#?> SET STYLE INDENT`.

@@ -43,11 +43,13 @@ COMMENT_MARKER = '#'
 DATETIME_SIGIL = '@'
 
 # RFC 3339 profile (ABNF SPEC: Date and Time Types). '@' is not part of the
-# captured body. Lowercase 't'/'z' are accepted and normalized before parsing.
+# captured body. The date-time separator may be 'T', 't', or exactly one
+# space (RFC 3339 §5.6 readability form); lowercase 'z' is accepted too. The
+# separator is normalized away before parsing (the body is rebuilt with 'T').
 _DATETIME_RE = re.compile(
     r'@(?:'
     r'(?P<date>\d{4}-\d{2}-\d{2})'
-    r'(?:[Tt](?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)'
+    r'(?:[Tt\x20](?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)'
     r'(?P<offset>[Zz]|[+-]\d{2}:\d{2})?)?'
     r'|(?P<timeonly>\d{2}:\d{2}:\d{2}(?:\.\d+)?))'
 )

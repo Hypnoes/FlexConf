@@ -223,6 +223,7 @@ Date and time values are bare literals introduced by the sigil `@`, using a prof
 odt1: @1979-05-27T07:32:00Z         # offset date-time (UTC)
 odt2: @1979-05-27T00:32:00-07:00    # offset date-time (numeric offset)
 odt3: @1979-05-27T00:32:00.999999Z  # fractional seconds
+odt4: @1979-05-27 07:32:00Z         # space separator (one single space)
 ldt:  @1979-05-27T07:32:00          # local date-time (no offset)
 date: @1979-05-27                   # local date
 time1: @07:32:00                    # local time
@@ -232,7 +233,7 @@ time2: @07:32:00.5                  # local time with fractional seconds
 Rules:
 
 - The `@` sigil is **fixed meta-syntax**, like the pragma prefix `#?>`: it never changes with the syntax parameters, and `@` must not appear in any literal syntax-parameter value (§ Syntax Parameters).
-- The date and time parts of a date-time are separated by `T` or `t` only; a space separator is not permitted.
+- The date and time parts of a date-time are separated by `T`, `t`, or exactly one space character. The space form exists for readability (RFC 3339 §5.6); a space-separated date-time is one single lexical unit, and serializers must always emit the `T` form.
 - The offset suffix is `Z`/`z` (UTC) or `±HH:MM`. Timezone database names are not used; a numeric offset is the only way to express zone information.
 - Seconds range from `00` to `59`; leap seconds are not supported.
 - Fractional seconds may carry any number of digits; implementations should support at least microsecond precision and may truncate beyond it.

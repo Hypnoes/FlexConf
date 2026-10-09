@@ -258,7 +258,13 @@ check("date-time as anonymous map items (BRACE)",
 check("date as anonymous map items (INDENT)",
       "items:\n  @2026-01-01\n  @2026-01-02\n",
       expected={'items': [date(2026, 1, 1), date(2026, 1, 2)]})
-check("date-time followed by a comment", "x: @2026-10-09 # today\n",
+check("space-separated offset date-time",
+      "x: @1979-05-27 07:32:00Z\n",
+      expected={'x': datetime(1979, 5, 27, 7, 32, tzinfo=timezone.utc)})
+check("space-separated local date-time",
+      "x: @1979-05-27 07:32:00\n",
+      expected={'x': datetime(1979, 5, 27, 7, 32)})
+check("date followed by a comment", "x: @2026-10-09 # today\n",
       expected={'x': date(2026, 10, 9)})
 
 # 21. Date/time error paths
@@ -270,8 +276,8 @@ check("malformed '@' literal", "x: @foo\n",
       expect_error="must introduce a well-formed date/time literal")
 check("date-time must be delimiter-terminated", "x: @2026-10-09x\n",
       expect_error="must introduce a well-formed date/time literal")
-check("space separator is not permitted", "x: @2026-10-09 12:13:14\n",
-      expect_error="Expected key")
+check("space separator requires exactly one space",
+      "x: @2026-10-09  12:13:14\n", expect_error="Expected key")
 check("incomplete time part", "x: @2026-10-09T12:13\n",
       expect_error="must introduce a well-formed date/time literal")
 check_raises("Config conflict: '@' reserved for date/time literals",

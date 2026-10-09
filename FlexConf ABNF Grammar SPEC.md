@@ -177,8 +177,8 @@ A profile of RFC 3339 / ISO 8601, introduced by the fixed sigil `@` (not a synta
 ```abnf
 date-time = "@" (offset-date-time / local-date-time / local-date / local-time)
 
-offset-date-time = full-date ("T" / "t") full-time
-local-date-time  = full-date ("T" / "t") partial-time
+offset-date-time = full-date ("T" / "t" / SP) full-time
+local-date-time  = full-date ("T" / "t" / SP) partial-time
 local-date       = full-date
 local-time       = partial-time
 
@@ -196,7 +196,7 @@ time-offset    = ("Z" / "z") / time-numoffset
 time-numoffset = ("+" / "-") time-hour ":" time-minute
 ```
 
-The date/time literal is a single lexical unit: the `@` sigil and the entire date/time body are consumed atomically, so the `:` characters inside `partial-time` never interact with `kv-sep`. The body must be followed by a delimiter or the end of input (see § Validity Constraints).
+The date/time literal is a single lexical unit: the `@` sigil and the entire date/time body are consumed atomically, so the `:` characters inside `partial-time` never interact with `kv-sep`. The SP separator in `offset-date-time` / `local-date-time` is exactly one space character. The body must be followed by a delimiter or the end of input (see § Validity Constraints).
 
 ## Validity Constraints
 
