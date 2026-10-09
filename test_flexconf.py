@@ -197,17 +197,12 @@ check("API style_indent(key_value_separator='=')",
       "a = 1\n", config=flexconf.Config.style_indent(key_value_separator='='),
       expected={'a': 1})
 
-# 18. CommentMarker '//': '//' comments are ignored; '#' is no longer a comment
-check("pragma CommentMarker '//'", '''#?> SET CommentMarker '//'
-{
-  a: 1, // trailing comment
-  // full-line comment
-  b: 2
-}
-''', expected={'a': 1, 'b': 2})
-check("'#' rejected when CommentMarker is '//'",
-      "#?> SET CommentMarker '//'\n{ a: 1 # oops\n}\n",
-      expect_error="Unexpected '#'")
+# 18. The comment marker is '#' — fixed, not configurable
+check("CommentMarker pragma rejected (not configurable)",
+      "#?> SET CommentMarker '//'\n{}\n",
+      expect_error="Unknown pragma parameter 'CommentMarker'")
+check("'//' is not a comment", "{ a: 1 // oops\n}\n",
+      expect_error="Expected COLON")
 
 # 19. Invalid configurations and pragmas are rejected
 def check_raises(name, fn, expect_error):
@@ -230,14 +225,11 @@ check_raises("Config conflict: ItemSeparator ':' vs KeyValueSeparator ':'",
 check_raises("Config conflict: unpaired <INDENT>",
              lambda: flexconf.Config(left_brace=flexconf.INDENT),
              "Invalid configuration")
-check_raises("Config conflict: illegal CommentMarker",
-             lambda: flexconf.Config(comment_marker=';'),
+check_raises("Config conflict: ItemSeparator conflicts with the comment marker",
+             lambda: flexconf.Config(item_separator='#'),
              "Invalid configuration")
 check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
       expect_error="Unknown style 'YAML'")
-check("illegal pragma CommentMarker rejected",
-      "#?> SET CommentMarker ';'\n{}\n",
-      expect_error="Invalid configuration")
 check("indent doc rejected when pragmas declare literal braces",
       "#?> SET ItemSeparator ';'\nserver:\n  a: 1\n",
       expect_error="SET STYLE INDENT")

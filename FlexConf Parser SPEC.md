@@ -7,7 +7,7 @@
 
 This document specifies the requirements and architectural design for a compliant FlexConf parser and interpreter. It details the process of converting FlexConf source text into a data structure and vice versa, ensuring consistent behavior across different implementations.
 
-FlexConf has a single unified structural model whose surface syntax is governed by five configurable parameters (`KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`, `CommentMarker`) and two canonical style presets (BRACE and INDENT). This specification describes a single parsing pipeline parameterized by that configuration; there are no separate "indentation parser" and "bracket parser".
+FlexConf has a single unified structural model whose surface syntax is governed by four configurable parameters (`KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`) and two canonical style presets (BRACE and INDENT). Comments are always introduced by `#`; the comment marker is fixed and not configurable. This specification describes a single parsing pipeline parameterized by that configuration; there are no separate "indentation parser" and "bracket parser".
 
 ## 2. Architecture Overview
 
@@ -22,13 +22,13 @@ A FlexConf implementation typically consists of three main components:
 ### 3.1. Input Processing
 
 - The input must be a UTF-8 encoded stream.
-- **Pragma Scanning**: Before standard tokenization, the lexer must scan the beginning of the file for pragma directives (`#?>`). The pragma prefix is fixed meta-syntax and does not change with `CommentMarker`. Pragmas are applied in order of appearance — `SET STYLE <name>` binds the four structural parameters atomically, subsequent single-parameter `SET` directives override individual values — and the resulting configuration is validated (§ 7) before any further processing. Unknown parameter names, unknown style names, and illegal values are `SyntaxError`s.
+- **Pragma Scanning**: Before standard tokenization, the lexer must scan the beginning of the file for pragma directives (`#?>`). The pragma prefix is fixed meta-syntax, recognized before the configuration takes effect. Pragmas are applied in order of appearance — `SET STYLE <name>` binds the four structural parameters atomically, subsequent single-parameter `SET` directives override individual values — and the resulting configuration is validated (§ 7) before any further processing. Unknown parameter names, unknown style names, and illegal values are `SyntaxError`s.
 
 ### 3.2. Style Resolution and Surface Detection
 
 The lexer must resolve the effective configuration and the document's surface before processing the first data token.
 
-- **Algorithm**: After pragma scanning, skip all leading whitespace and comments (using the effective `CommentMarker`).
+- **Algorithm**: After pragma scanning, skip all leading whitespace and `#` comments.
   - If `LeftBrace` is a literal and the text at that position starts with it, set the surface to **explicit** (physical braces).
   - Otherwise, the surface is **indentation**; this requires `LeftBrace = <INDENT>` (and hence `RightBrace = <DEDENT>`) in the effective configuration. If the configuration does not satisfy this, raise an `InvalidConfigurationError`.
   - Backward-compatible convenience: a document with no pragmas and no explicit configuration auto-detects — a leading `{` selects the BRACE style, anything else selects the INDENT style.
@@ -44,7 +44,7 @@ The lexer generates a stream of tokens drawn from a single vocabulary (the names
 - `LBRACE`, `RBRACE` — the effective braces (literal tokens, or virtual tokens from indentation analysis when bound to `<INDENT>` / `<DEDENT>`)
 - `EOF`
 
-Comments produce no tokens. When `CommentMarker` is `//`, a lone `/` outside a string is a `SyntaxError`.
+Comments produce no tokens. A comment runs from `#` to the end of the line; the comment marker is fixed and never changes.
 
 **Whitespace skipping**: whitespace not bound to a syntactic role is skipped between tokens. In the BRACE style this covers all spaces, tabs, and newlines. When `ItemSeparator = <NEWLINE>`, line endings produce `ITEM_SEP` tokens and are not skipped; a blank line therefore produces two consecutive `ITEM_SEP` tokens. When `LeftBrace = <INDENT>`, line-leading spaces feed virtual token generation (§ 3.4) and are not skipped.
 
@@ -132,15 +132,14 @@ The parser must provide descriptive error messages including:
 
 To support configurable surface syntax:
 
-1. **Configuration Object**: The parser maintains a configuration state containing the five parameters:
+1. **Configuration Object**: The parser maintains a configuration state containing the four parameters:
     - `KeyValueSeparator`: default `:`
     - `ItemSeparator`: default `,` (or the symbolic value `<NEWLINE>`)
     - `LeftBrace`: default `{` (or `<INDENT>`)
     - `RightBrace`: default `}` (or `<DEDENT>`)
-    - `CommentMarker`: default `#` (the only other legal value is `//`)
 2. **Style Presets**: The named styles BRACE (all defaults) and INDENT (`LeftBrace = <INDENT>`, `RightBrace = <DEDENT>`, `ItemSeparator = <NEWLINE>`, `KeyValueSeparator = :`) are atomic bindings applied by `SET STYLE`.
 3. **Pragma Processor**: For each `#?> SET ...` directive at the head of the file, update the configuration in order of appearance; `SET STYLE <name>` first resets the four structural parameters to the named preset. The final configuration must be validated before tokenization.
-4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with `CommentMarker`; `<INDENT>` / `<DEDENT>` must be bound as a pair; `CommentMarker` must be `#` or `//`.
+4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with the fixed `#` comment marker; `<INDENT>` / `<DEDENT>` must be bound as a pair.
 5. **Dynamic Tokenization**: The lexer must use the values from the configuration object to match tokens (including multi-character literal separators), rather than hardcoded characters.
 
 ---

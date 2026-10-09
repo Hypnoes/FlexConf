@@ -1,9 +1,10 @@
 """FlexConf reference implementation.
 
 FlexConf has a single unified structural model (Language SPEC: Block
-Structure) whose surface syntax is governed by five configurable
-parameters — KeyValueSeparator, ItemSeparator, LeftBrace, RightBrace,
-CommentMarker — plus two named style presets, BRACE (default) and INDENT.
+Structure) whose surface syntax is governed by four configurable
+parameters — KeyValueSeparator, ItemSeparator, LeftBrace, RightBrace —
+plus two named style presets, BRACE (default) and INDENT. Comments are
+always introduced by '#'; the comment marker is not configurable.
 
 The lexer normalizes both surfaces into one token stream: in the
 indentation surface, INDENT/DEDENT tokens are the virtual LeftBrace/
@@ -30,13 +31,16 @@ NEWLINE = '<NEWLINE>'  # line ending                    (virtual ItemSeparator)
 
 SYMBOLIC_VALUES = (INDENT, DEDENT, NEWLINE)
 
+# The comment marker is fixed (Language SPEC: Comments); it is not a
+# configurable syntax parameter.
+COMMENT_MARKER = '#'
+
 # Pragma parameter names -> Config fields (Language SPEC: Pragma Directives)
 PARAM_FIELDS = {
     'KeyValueSeparator': 'key_value_separator',
     'ItemSeparator': 'item_separator',
     'LeftBrace': 'left_brace',
     'RightBrace': 'right_brace',
-    'CommentMarker': 'comment_marker',
 }
 
 STYLE_PRESETS = {
@@ -59,7 +63,7 @@ class Config:
 
     The defaults are the BRACE style. Use Config.style_indent() for the
     INDENT preset; both accept field overrides, e.g.
-    Config.style_indent(comment_marker='//').
+    Config.style_indent(key_value_separator='=').
 
     Validation (Language SPEC: Syntax Parameters) runs at construction:
     conflicting or otherwise illegal configurations raise FlexConfError
@@ -69,7 +73,6 @@ class Config:
     item_separator: str = ','
     left_brace: str = '{'
     right_brace: str = '}'
-    comment_marker: str = '#'
 
     @classmethod
     def style_brace(cls, **overrides):
@@ -84,10 +87,6 @@ class Config:
     def __post_init__(self):
         def fail(msg):
             raise FlexConfError(f"Invalid configuration: {msg}", 1, 1)
-
-        cm = self.comment_marker
-        if cm not in ('#', '//'):
-            fail("CommentMarker must be '#' or '//'")
 
         kv, sep, lb, rb = (self.key_value_separator, self.item_separator,
                            self.left_brace, self.right_brace)
@@ -127,8 +126,9 @@ class Config:
                 if v.startswith(other) or other.startswith(v):
                     fail(f"{name} {v!r} and {other_name} {other!r} must not "
                          "be prefixes of each other")
-            if v.startswith(cm) or cm.startswith(v):
-                fail(f"{name} {v!r} conflicts with CommentMarker {cm!r}")
+            if v.startswith(COMMENT_MARKER) or COMMENT_MARKER.startswith(v):
+                fail(f"{name} {v!r} conflicts with the comment marker "
+                     f"{COMMENT_MARKER!r}")
             seen.append((name, v))
 
         # Reference-implementation limit (the SPEC allows this combination,
@@ -195,9 +195,9 @@ class Lexer:
 
     def _scan_pragmas(self, base: Config):
         # Pragma directives (#?>) are fixed meta-syntax: they are recognized
-        # before the configuration takes effect, so their prefix never
-        # depends on CommentMarker (Language SPEC: Pragma Directives).
-        # Only blank lines, '#' comments, and pragma lines may precede data.
+        # before the configuration takes effect (Language SPEC: Pragma
+        # Directives). Only blank lines, '#' comments, and pragma lines may
+        # precede data.
         values = {field: getattr(base, field) for field in PARAM_FIELDS.values()}
         pos = 0
         last_line = 1
@@ -257,7 +257,7 @@ class Lexer:
             if char.isspace():
                 p += 1
                 continue
-            if self.text.startswith(self.config.comment_marker, p):
+            if char == COMMENT_MARKER:
                 while p < len(self.text) and self.text[p] != '\n':
                     p += 1
                 continue
@@ -284,16 +284,14 @@ class Lexer:
 
     def _build_delimiters(self):
         # Characters that terminate a bare literal: whitespace plus the first
-        # character of every literal separator and comment marker. '{'/'}'
-        # are always delimiters so they can be diagnosed as style mixing in
-        # the indentation surface; '#' and '/' are always delimiters so a
-        # comment marker that is not in effect still stops bare literals.
-        delims = set(' \t\n\r{}#/')
+        # character of every literal separator and the '#' comment marker.
+        # '{'/'}' are always delimiters so they can be diagnosed as style
+        # mixing in the indentation surface.
+        delims = set(' \t\n\r{}#')
         for s in (self.config.key_value_separator, self.config.item_separator,
                   self.config.left_brace, self.config.right_brace):
             if s not in SYMBOLIC_VALUES:
                 delims.add(s[0])
-        delims.add(self.config.comment_marker[0])
         return delims
 
     def _compute_base_indent_unit(self):
@@ -304,7 +302,7 @@ class Lexer:
             content = line.lstrip(' ')
             if not content.strip():
                 continue  # blank line
-            if content.startswith(self.config.comment_marker):
+            if content.startswith(COMMENT_MARKER):
                 continue  # comment-only line
             indent = len(line) - len(content)
             if indent > 0:
@@ -344,16 +342,10 @@ class Lexer:
                 self._advance()
                 continue
 
-            # 2. Handle Comments (the effective CommentMarker)
-            if self.text.startswith(self.config.comment_marker, self.pos):
+            # 2. Handle Comments ('#' to end of line; fixed, not configurable)
+            if char == COMMENT_MARKER:
                 self._skip_comment()
                 continue
-            if char == '#' or char == '/':
-                # The marker that is NOT in effect (or a lone '/'): still a
-                # hard error rather than a silent bare-literal character.
-                raise FlexConfError(
-                    f"Unexpected '{char}' (comment marker is "
-                    f"{self.config.comment_marker!r})", self.line, self.col)
 
             # 3. Handle Structure (literal separators from the configuration)
             if self._match_structure():
@@ -451,7 +443,7 @@ class Lexer:
                 self._advance(p - self.pos + 1)  # Consume spaces + newline
                 pending_blanks += 1
                 continue
-            elif self.text.startswith(self.config.comment_marker, p):
+            elif self.text[p] == COMMENT_MARKER:
                 # Comment line, ignore (generates no tokens)
                 self._advance(p - self.pos)  # Consume spaces
                 self._skip_comment()
@@ -925,10 +917,9 @@ list_example:
         # Test pragma-driven customization
         custom_code = """
 #?> SET ItemSeparator ';'
-#?> SET CommentMarker '//'
 {
     server: {
-        host: "localhost";  // semicolons and // comments
+        host: "localhost";  # semicolons and # comments
         port: 8080
     }
 }

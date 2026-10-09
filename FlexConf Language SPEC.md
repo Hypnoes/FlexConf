@@ -5,7 +5,7 @@
 
 ## Overview
 
-FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf is defined by a **single unified structural model**: every document is a hierarchy of *blocks* of items, and the concrete surface syntax of a document is governed by five configurable **syntax parameters** (§ Syntax Parameters). Two canonical parameter configurations, called **styles**, are predefined:
+FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf is defined by a **single unified structural model**: every document is a hierarchy of *blocks* of items, and the concrete surface syntax of a document is governed by four configurable **syntax parameters** (§ Syntax Parameters). Two canonical parameter configurations, called **styles**, are predefined:
 
 - the **BRACE** style (braces and commas, JSON-like), and
 - the **INDENT** style (significant indentation and newlines, YAML-like).
@@ -30,7 +30,7 @@ FlexConf aims to be:
 
 ### Syntax Parameters
 
-The surface syntax of a FlexConf document is determined by five parameters:
+The surface syntax of a FlexConf document is determined by four parameters:
 
 | Parameter | Default | Legal values | Meaning |
 | --- | --- | --- | --- |
@@ -38,7 +38,8 @@ The surface syntax of a FlexConf document is determined by five parameters:
 | `ItemSeparator` | `,` | literal string or `<NEWLINE>` | Separates adjacent items within a block |
 | `LeftBrace` | `{` | literal string or `<INDENT>` | Opens a block |
 | `RightBrace` | `}` | literal string or `<DEDENT>` | Closes a block |
-| `CommentMarker` | `#` | `#` or `//` only | Starts a line comment |
+
+The comment marker is **not** a syntax parameter: comments are always introduced by `#` (see § Comments).
 
 **Literal values** are quoted strings of one or more characters.
 
@@ -51,9 +52,9 @@ The surface syntax of a FlexConf document is determined by five parameters:
 A configuration is **valid** only if:
 
 1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace or string quote characters.
-2. No literal separator is a prefix of `CommentMarker`, and `CommentMarker` is not a prefix of any literal separator.
+2. No literal separator is a prefix of the comment marker `#`, and `#` is not a prefix of any literal separator.
 3. `<INDENT>` and `<DEDENT>` are bound as a pair: `LeftBrace = <INDENT>` if and only if `RightBrace = <DEDENT>`.
-4. `KeyValueSeparator` and `CommentMarker` are always literal.
+4. `KeyValueSeparator` is always literal.
 
 An invalid configuration raises an *Invalid Configuration Error* before any parsing takes place.
 
@@ -68,14 +69,13 @@ KeyValueSeparator = ':'
 ItemSeparator     = ','
 LeftBrace         = '{'
 RightBrace        = '}'
-CommentMarker     = '#'
 ```
 
 All whitespace (spaces, tabs, newlines) is insignificant between tokens in this style (see § Whitespace Handling).
 
 #### INDENT
 
-`SET STYLE INDENT` is exactly equivalent to the following bindings (`CommentMarker` unchanged):
+`SET STYLE INDENT` is exactly equivalent to the following bindings:
 
 ```text
 LeftBrace         = <INDENT>
@@ -91,16 +91,14 @@ The INDENT style adds the following rules, which are part of its virtual-token g
 - Each indentation level generates exactly one `<INDENT>` / `<DEDENT>` virtual token, so a jump of two levels produces two consecutive `LeftBrace` tokens (see § Anonymous Maps).
 - A blank line produces an extra `ItemSeparator` token; exactly one blank line separates adjacent anonymous map items (see § Anonymous Maps).
 
-Individual parameters may be overridden on top of a style (e.g. `SET STYLE INDENT` followed by `SET CommentMarker '//'`). Such mixed bindings are legal as long as the final configuration satisfies the validity constraints above, but are unconventional.
+Individual parameters may be overridden on top of a style (e.g. `SET STYLE INDENT` followed by `SET KeyValueSeparator '='`). Such mixed bindings are legal as long as the final configuration satisfies the validity constraints above, but are unconventional.
 
 ### Comments
 
-- Comments begin with the effective `CommentMarker` and continue to the end of the line.
+- Comments begin with `#` and continue to the end of the line. The comment marker is fixed: it cannot be changed by pragma directives or configuration.
 - Comments may appear on their own line or after values on the same line.
 - Comments are ignored by parsers; a comment-only line produces no tokens.
-- The default comment marker is `#`; it can be switched to `//` per document via `#?> SET CommentMarker '//'`.
-- When `//` is the comment marker, a `/` encountered where a token is expected must be the start of a `//` comment; a lone `/` outside a string is a `SyntaxError`. (Bare keys and bare literals never contain `/`, so this introduces no ambiguity.)
-- The pragma prefix `#?>` is fixed meta-syntax and does not change with `CommentMarker` (see § Pragma Directives).
+- The pragma prefix `#?>` is fixed meta-syntax, recognized before the configuration takes effect (see § Pragma Directives).
 
 ```flexconf
 # This is a full-line comment
@@ -362,7 +360,7 @@ application:
 The effective configuration of a document is resolved as follows:
 
 1. **Pragma scanning**: The lexer scans the head of the file for pragma directives (§ Pragma Directives) and applies them in order of appearance. `SET STYLE <name>` binds the four structural parameters atomically; subsequent single-parameter `SET` directives override individual parameters.
-2. **Surface detection**: After skipping whitespace and comments (using the effective `CommentMarker`), the first non-whitespace, non-comment character is examined:
+2. **Surface detection**: After skipping whitespace and `#` comments, the first non-whitespace, non-comment character is examined:
    - If `LeftBrace` is bound to a literal and the text at that position starts with it, the document uses the **explicit block surface** (physical braces).
    - Otherwise the document uses the **indentation surface**, which requires `LeftBrace = <INDENT>`; if the effective configuration does not satisfy this, the document is invalid.
    - As a backward-compatible convenience, a document with **no pragma directives and no explicit configuration** behaves as if its style were auto-detected: a leading `{` selects BRACE, anything else selects INDENT.
@@ -376,7 +374,7 @@ The effective configuration of a document is resolved as follows:
 - `ItemSeparator = <NEWLINE>` makes line endings significant (they *are* the separator), and two consecutive line endings form a blank line, which ends an anonymous map item in the INDENT style.
 - `LeftBrace = <INDENT>` / `RightBrace = <DEDENT>` make the leading whitespace of each line significant (it generates virtual tokens); whitespace within a line remains insignificant.
 - Whitespace inside string values is always significant.
-- Comments run from the `CommentMarker` to the end of the line; comment-only lines produce no tokens. A blank line produces an `ItemSeparator` token when `ItemSeparator = <NEWLINE>`.
+- Comments run from `#` to the end of the line; comment-only lines produce no tokens. A blank line produces an `ItemSeparator` token when `ItemSeparator = <NEWLINE>`.
 
 ### Conversions Between Styles
 
@@ -386,7 +384,7 @@ The effective configuration of a document is resolved as follows:
 
 ### Pragma Directives
 
-Pragmas start with `#?>` and redefine syntax parameters for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, regardless of the configured `CommentMarker`, because pragmas are processed before the configuration takes effect.
+Pragmas start with `#?>` and redefine syntax parameters for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, because pragmas are processed before the configuration takes effect.
 
 Pragmas must appear at the very beginning of the document, preceded only by whitespace, blank lines, or `#` comments. Two directive forms exist:
 
@@ -397,13 +395,12 @@ Pragmas must appear at the very beginning of the document, preceded only by whit
 #?> SET LeftBrace '['
 #?> SET RightBrace ']'
 #?> SET LeftBrace <INDENT>     " symbolic values may also be set individually
-#?> SET CommentMarker '//'     " switch the comment marker
 ```
 
 Rules:
 
 - Directives apply in order of appearance; later directives override earlier ones.
-- A single-parameter value is either a quoted string or one of the symbolic values `<INDENT>`, `<DEDENT>`, `<NEWLINE>`. `CommentMarker` accepts only `'#'` and `'//'`.
+- A single-parameter value is either a quoted string or one of the symbolic values `<INDENT>`, `<DEDENT>`, `<NEWLINE>`.
 - `STYLE` accepts the style names `BRACE` and `INDENT` (case-sensitive).
 - An unknown parameter name, unknown style name, or illegal value is a `SyntaxError`.
 - All pragmas take effect before surface detection.
@@ -422,7 +419,7 @@ The following conditions make a FlexConf document invalid:
    - In the INDENT style: missing blank lines between anonymous map items, or extra blank lines
    - In the BRACE style: missing `ItemSeparator` between items
 6. **Unmatched braces**: Every `LeftBrace` (literal or virtual) must have a matching `RightBrace`.
-7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, illegal `CommentMarker`, ...).
+7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, ...).
 
 ### Filename Extension
 

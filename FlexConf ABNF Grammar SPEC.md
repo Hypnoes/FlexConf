@@ -7,7 +7,7 @@
 
 This document provides the formal ABNF (Augmented Backus-Naur Form) grammar for the FlexConf 1.0 specification.
 
-FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Syntax Parameters). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`, `comment-mark`) and give the **default instantiation** — the BRACE style. Bindings for other styles, including the virtual tokens of the INDENT style, are given in notes and in § Validity Constraints, since indentation analysis cannot be expressed in ABNF.
+FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Syntax Parameters). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`) and give the **default instantiation** — the BRACE style. Bindings for other styles, including the virtual tokens of the INDENT style, are given in notes and in § Validity Constraints, since indentation analysis cannot be expressed in ABNF. The comment terminal `comment-mark` is not parameterized: it is always `"#"`.
 
 ## Syntax Parameters and Terminals
 
@@ -17,7 +17,6 @@ FlexConf has a single unified structural grammar whose surface terminals are **c
 | `ItemSeparator` | `item-sep` | `","` | `<NEWLINE>` (virtual) |
 | `LeftBrace` | `lbrace` | `%x7B` (`{`) | `<INDENT>` (virtual) |
 | `RightBrace` | `rbrace` | `%x7D` (`}`) | `<DEDENT>` (virtual) |
-| `CommentMarker` | `comment-mark` | `"#"` | `"#"` |
 
 ```abnf
 ; Default instantiation of the parameterized terminals
@@ -25,7 +24,9 @@ kv-sep        = ":"
 item-sep      = ","
 lbrace        = %x7B          ; {
 rbrace        = %x7D          ; }
-comment-mark  = "#"           ; or "//" when configured
+
+; Fixed terminal (not a syntax parameter)
+comment-mark  = "#"
 ```
 
 Symbolic values `<INDENT>`, `<DEDENT>`, and `<NEWLINE>` denote virtual tokens generated from line-structure analysis. When `item-sep` is bound to `<NEWLINE>`, every line ending produces one `item-sep` token, so a blank line produces two consecutive `item-sep` tokens (this ends an anonymous map item, see the Language Specification).
@@ -174,9 +175,8 @@ bin-int = "0" ("b" / "B") 1*(%x30-31) *(UNDERSCORE 1*(%x30-31))
 The following constraints are not directly expressible in ABNF but must be enforced:
 
 1. **Configuration Constraints**:
-   - The literal values of the four structural parameters are pairwise distinct and conflict-free with `comment-mark`.
+   - The literal values of the four structural parameters are pairwise distinct and conflict-free with the fixed `comment-mark` (`"#"`).
    - `<INDENT>` / `<DEDENT>` are bound as a pair to `lbrace` / `rbrace`.
-   - `CommentMarker` is either `#` or `//`.
 
 2. **Style and Surface Constraints**:
    - A document uses exactly one surface style; literal braces must not appear in the indentation surface (outside strings).
