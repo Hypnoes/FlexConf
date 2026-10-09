@@ -24,7 +24,7 @@ Although this design has basically taken shape, there are still some details und
 | `FlexConf ABNF Grammar SPEC.md` | Machine-oriented ABNF grammar capturing the full syntax. |
 | `FlexConf Parser SPEC.md` | Architectural requirements for compliant parser implementations. |
 | `flexconf.py` | Python reference implementation: lexer, parser, AST, and interpreter, with a demo entry point. |
-| `test_flexconf.py` | Self-contained test script (28 checks) covering both canonical styles, pragma-driven customization, and the AST layer. |
+| `test_flexconf.py` | Self-contained test script (45 checks) covering both canonical styles, pragma-driven customization, date/time literals, and the AST layer. |
 | `examples/` | Sample `.fc` files demonstrating the INDENT (`conf_1.fc`) and BRACE (`conf_2.fc`) styles. |
 
 ---
@@ -38,9 +38,9 @@ FlexConf documents are UTF-8 encoded. Every document is a hierarchy of **blocks*
 
 Across all styles, FlexConf supports:
 
-- Primitive types: strings (basic, literal, multi-line), numbers (dec/hex/oct/bin, floats, special floats), booleans, null.
+- Primitive types: strings (basic, literal, multi-line), numbers (dec/hex/oct/bin, floats, special floats), booleans, null, and date/time literals — `@`-sigiled RFC 3339 profiles such as `@1979-05-27T07:32:00Z`, `@1979-05-27`, or `@07:32:00`, mapping to native date/time types.
 - Structured types: maps (explicit keys) and anonymous maps — traditionally called lists — whose implicit keys are the strings `"0"`, `"1"`, ... assigned in order of appearance. Both nest arbitrarily.
-- Line comments introduced by `#` (fixed, not configurable).
+- Line comments introduced by `#`.
 - Pragma directives (`#?> SET ...`) that customize any syntax parameter per file, e.g. `#?> SET ItemSeparator ';'` or `#?> SET STYLE INDENT`.
 
 See `FlexConf Language SPEC.md` for the full narrative, including the whitespace significance rules, conversion rules, and validity constraints.
@@ -163,7 +163,6 @@ Diffing these files highlights the one-to-one correspondence between styles, mak
 ## Roadmap Ideas
 
 ### Language Roadmap
-- First-class `datetime` data type with ISO-8601 parsing, timezone awareness, and canonical serialization.
 - Serializers (`dumps`/`dump`) with style-aware pretty printing for round-tripping between styles.
 
 ### Ecosystem

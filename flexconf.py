@@ -4,7 +4,7 @@ FlexConf has a single unified structural model (Language SPEC: Block
 Structure) whose surface syntax is governed by four configurable
 parameters — KeyValueSeparator, ItemSeparator, LeftBrace, RightBrace —
 plus two named style presets, BRACE (default) and INDENT. Comments are
-always introduced by '#'; the comment marker is not configurable.
+introduced by '#'.
 
 The lexer normalizes both surfaces into one token stream: in the
 indentation surface, INDENT/DEDENT tokens are the virtual LeftBrace/
@@ -15,8 +15,10 @@ Pipeline: Lexer (pragma scan -> style/surface resolution -> tokenize)
 -> Parser (unified block parsing) -> Interpreter (native types).
 """
 
+import re
 import sys
 from dataclasses import dataclass, replace
+from datetime import date, datetime, time
 from enum import Enum, auto
 from math import gcd
 from typing import Any
@@ -31,9 +33,43 @@ NEWLINE = '<NEWLINE>'  # line ending                    (virtual ItemSeparator)
 
 SYMBOLIC_VALUES = (INDENT, DEDENT, NEWLINE)
 
-# The comment marker is fixed (Language SPEC: Comments); it is not a
-# configurable syntax parameter.
+# Comments start with '#' and run to the end of the line
+# (Language SPEC: Comments).
 COMMENT_MARKER = '#'
+
+# The date/time sigil is fixed meta-syntax (Language SPEC: Dates and Times),
+# like the '#?>' pragma prefix: it never changes with the syntax parameters,
+# and no literal parameter value may contain it.
+DATETIME_SIGIL = '@'
+
+# RFC 3339 profile (ABNF SPEC: Date and Time Types). '@' is not part of the
+# captured body. Lowercase 't'/'z' are accepted and normalized before parsing.
+_DATETIME_RE = re.compile(
+    r'@(?:'
+    r'(?P<date>\d{4}-\d{2}-\d{2})'
+    r'(?:[Tt](?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)'
+    r'(?P<offset>[Zz]|[+-]\d{2}:\d{2})?)?'
+    r'|(?P<timeonly>\d{2}:\d{2}:\d{2}(?:\.\d+)?))'
+)
+
+
+def _parse_datetime_body(m: re.Match):
+    """Convert a _DATETIME_RE match to a date/time/datetime object.
+
+    Raises ValueError on calendar-invalid values (e.g. month 13, Feb 30).
+    Requires Python 3.11+ (fromisoformat accepts 'Z' and arbitrary-length
+    fractional seconds, truncated to microseconds).
+    """
+    if m.group('timeonly') is not None:
+        return time.fromisoformat(m.group('timeonly'))
+    d = m.group('date')
+    if m.group('time') is None:
+        return date.fromisoformat(d)
+    body = f"{d}T{m.group('time')}"
+    offset = m.group('offset')
+    if offset:
+        body += 'Z' if offset in ('Z', 'z') else offset
+    return datetime.fromisoformat(body)
 
 # Pragma parameter names -> Config fields (Language SPEC: Pragma Directives)
 PARAM_FIELDS = {
@@ -120,6 +156,9 @@ class Config:
                 fail(f"{name} must not contain whitespace")
             if any(q in v for q in '"\'`'):
                 fail(f"{name} must not contain string quote characters")
+            if DATETIME_SIGIL in v:
+                fail(f"{name} must not contain {DATETIME_SIGIL!r} "
+                     "(reserved for date/time literals)")
             for other_name, other in seen:
                 if v == other:
                     fail(f"{name} {v!r} conflicts with {other_name}")
@@ -145,6 +184,7 @@ class TokenType(Enum):
     NUMBER = auto()
     BOOLEAN = auto()
     NULL = auto()
+    DATETIME = auto()      # '@'-sigiled date/time literal
     IDENTIFIER = auto()
 
     # Structure (unified vocabulary; the lexer normalizes both surfaces)
@@ -342,7 +382,7 @@ class Lexer:
                 self._advance()
                 continue
 
-            # 2. Handle Comments ('#' to end of line; fixed, not configurable)
+            # 2. Handle Comments ('#' to end of line)
             if char == COMMENT_MARKER:
                 self._skip_comment()
                 continue
@@ -517,6 +557,12 @@ class Lexer:
         # literals run until a structural delimiter and are then classified.
         char = self.text[self.pos]
 
+        # Date/time literal (Language SPEC: Dates and Times). The sigil is
+        # fixed meta-syntax; the body is one atomic lexeme, so its ':'
+        # characters never interact with the KeyValueSeparator.
+        if char == DATETIME_SIGIL:
+            return self._parse_datetime()
+
         # String
         if char in ('"', "'"):
             # Simple string parser (does not handle all escapes/multiline perfectly in this ref)
@@ -545,6 +591,29 @@ class Lexer:
 
         type_, val = self._classify_literal(raw)
         return Token(type_, val, self.line, self.col - len(raw))
+
+    def _parse_datetime(self):
+        """Scan a '@'-sigiled date/time literal (Language SPEC: Dates and
+        Times). The body must match the RFC 3339 profile and be followed by
+        a structural delimiter or EOF; any other '@' outside a string is a
+        SyntaxError."""
+        m = _DATETIME_RE.match(self.text, self.pos)
+        if m and (m.end() == len(self.text)
+                  or self.text[m.end()] in self._literal_delims):
+            raw = m.group(0)
+            try:
+                val = _parse_datetime_body(m)
+            except ValueError as e:
+                raise FlexConfError(
+                    f"Invalid date/time literal {raw!r}: {e}",
+                    self.line, self.col)
+            token = Token(TokenType.DATETIME, val, self.line, self.col)
+            self._advance(len(raw))
+            return token
+        raise FlexConfError(
+            "'@' must introduce a well-formed date/time literal "
+            "(e.g. @1979-05-27T07:32:00Z, @1979-05-27, @07:32:00)",
+            self.line, self.col)
 
     def _classify_literal(self, raw):
         if raw == 'true':
@@ -810,7 +879,8 @@ class Parser:
             return self._parse_block(TokenType.INDENT, TokenType.DEDENT, TokenType.NEWLINE)
 
         # Primitives
-        if t.type in (TokenType.STRING, TokenType.NUMBER, TokenType.BOOLEAN, TokenType.NULL):
+        if t.type in (TokenType.STRING, TokenType.NUMBER, TokenType.BOOLEAN,
+                      TokenType.NULL, TokenType.DATETIME):
             tok = self.consume()
             return ScalarNode(tok.value, tok.line, tok.col)
 

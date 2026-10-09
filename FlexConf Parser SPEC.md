@@ -7,7 +7,7 @@
 
 This document specifies the requirements and architectural design for a compliant FlexConf parser and interpreter. It details the process of converting FlexConf source text into a data structure and vice versa, ensuring consistent behavior across different implementations.
 
-FlexConf has a single unified structural model whose surface syntax is governed by four configurable parameters (`KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`) and two canonical style presets (BRACE and INDENT). Comments are always introduced by `#`; the comment marker is fixed and not configurable. This specification describes a single parsing pipeline parameterized by that configuration; there are no separate "indentation parser" and "bracket parser".
+FlexConf has a single unified structural model whose surface syntax is governed by four configurable parameters (`KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`) and two canonical style presets (BRACE and INDENT). Comments are introduced by `#`. This specification describes a single parsing pipeline parameterized by that configuration; there are no separate "indentation parser" and "bracket parser".
 
 ## 2. Architecture Overview
 
@@ -38,13 +38,15 @@ The lexer must resolve the effective configuration and the document's surface be
 
 The lexer generates a stream of tokens drawn from a single vocabulary (the names below are advisory, not mandated):
 
-- `IDENTIFIER` (bare keys), `STRING`, `NUMBER`, `BOOLEAN`, `NULL` (literals)
+- `IDENTIFIER` (bare keys), `STRING`, `NUMBER`, `BOOLEAN`, `NULL`, `DATETIME` (literals)
 - `KV_SEP` — the effective `KeyValueSeparator`
 - `ITEM_SEP` — the effective `ItemSeparator` (a literal token, or a virtual token per line ending when bound to `<NEWLINE>`)
 - `LBRACE`, `RBRACE` — the effective braces (literal tokens, or virtual tokens from indentation analysis when bound to `<INDENT>` / `<DEDENT>`)
 - `EOF`
 
-Comments produce no tokens. A comment runs from `#` to the end of the line; the comment marker is fixed and never changes.
+Comments produce no tokens. A comment runs from `#` to the end of the line.
+
+**Date/time literals**: the sigil `@` is fixed meta-syntax (like the `#?>` pragma prefix) and never changes with the configuration. The lexer must scan `@` and the entire date/time body that follows it as one atomic `DATETIME` token — the `:` characters inside the body never interact with the effective `KeyValueSeparator`. The body must match the grammar in the ABNF specification and be followed by a delimiter or the end of input; outside strings, an `@` that does not introduce a well-formed date/time literal is a `SyntaxError`, as is a literal that fails calendar validation (e.g. `@2026-02-30`).
 
 **Whitespace skipping**: whitespace not bound to a syntactic role is skipped between tokens. In the BRACE style this covers all spaces, tabs, and newlines. When `ItemSeparator = <NEWLINE>`, line endings produce `ITEM_SEP` tokens and are not skipped; a blank line therefore produces two consecutive `ITEM_SEP` tokens. When `LeftBrace = <INDENT>`, line-leading spaces feed virtual token generation (§ 3.4) and are not skipped.
 
@@ -103,6 +105,10 @@ The interpreter maps FlexConf types to host language types:
 - **Float** -> Float / Double
 - **Boolean** -> Boolean
 - **Null** -> Null / None / Nil
+- **Offset date-time** (`@1979-05-27T07:32:00Z`) -> timezone-aware date-time type
+- **Local date-time** (`@1979-05-27T07:32:00`) -> naive date-time type
+- **Local date** (`@1979-05-27`) -> date type
+- **Local time** (`@07:32:00`) -> time type
 
 ### 5.2. Anonymous Map Construction
 
@@ -139,7 +145,7 @@ To support configurable surface syntax:
     - `RightBrace`: default `}` (or `<DEDENT>`)
 2. **Style Presets**: The named styles BRACE (all defaults) and INDENT (`LeftBrace = <INDENT>`, `RightBrace = <DEDENT>`, `ItemSeparator = <NEWLINE>`, `KeyValueSeparator = :`) are atomic bindings applied by `SET STYLE`.
 3. **Pragma Processor**: For each `#?> SET ...` directive at the head of the file, update the configuration in order of appearance; `SET STYLE <name>` first resets the four structural parameters to the named preset. The final configuration must be validated before tokenization.
-4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with the fixed `#` comment marker; `<INDENT>` / `<DEDENT>` must be bound as a pair.
+4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with the `#` comment marker; no literal parameter value may contain `@`; `<INDENT>` / `<DEDENT>` must be bound as a pair.
 5. **Dynamic Tokenization**: The lexer must use the values from the configuration object to match tokens (including multi-character literal separators), rather than hardcoded characters.
 
 ---

@@ -7,7 +7,7 @@
 
 This document provides the formal ABNF (Augmented Backus-Naur Form) grammar for the FlexConf 1.0 specification.
 
-FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Syntax Parameters). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`) and give the **default instantiation** — the BRACE style. Bindings for other styles, including the virtual tokens of the INDENT style, are given in notes and in § Validity Constraints, since indentation analysis cannot be expressed in ABNF. The comment terminal `comment-mark` is not parameterized: it is always `"#"`.
+FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Syntax Parameters). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`) and give the **default instantiation** — the BRACE style. Bindings for other styles, including the virtual tokens of the INDENT style, are given in notes and in § Validity Constraints, since indentation analysis cannot be expressed in ABNF. The comment terminal `comment-mark` has the single instantiation `"#"`. The date/time sigil `@` is likewise fixed meta-syntax, independent of all parameters.
 
 ## Syntax Parameters and Terminals
 
@@ -25,7 +25,7 @@ item-sep      = ","
 lbrace        = %x7B          ; {
 rbrace        = %x7D          ; }
 
-; Fixed terminal (not a syntax parameter)
+; The comment marker
 comment-mark  = "#"
 ```
 
@@ -88,7 +88,7 @@ quoted-key-content = *(%x01-5F / %x61-10FFFF)  ; Any Unicode char except backtic
 
 value = primitive / block
 
-primitive = string / number / boolean / null
+primitive = string / number / boolean / null / date-time
 
 string = basic-string / ml-basic-string / literal-string / ml-literal-string
 number = integer / float
@@ -170,12 +170,41 @@ oct-int = "0" ("o" / "O") 1*(%x30-37) *(UNDERSCORE 1*(%x30-37))
 bin-int = "0" ("b" / "B") 1*(%x30-31) *(UNDERSCORE 1*(%x30-31))
 ```
 
+## Date and Time Types
+
+A profile of RFC 3339 / ISO 8601, introduced by the fixed sigil `@` (not a syntax parameter):
+
+```abnf
+date-time = "@" (offset-date-time / local-date-time / local-date / local-time)
+
+offset-date-time = full-date ("T" / "t") full-time
+local-date-time  = full-date ("T" / "t") partial-time
+local-date       = full-date
+local-time       = partial-time
+
+full-date      = date-fullyear "-" date-month "-" date-mday
+date-fullyear  = 4DIGIT
+date-month     = 2DIGIT        ; 01-12
+date-mday      = 2DIGIT        ; 01-31, bounded by month and year
+partial-time   = time-hour ":" time-minute ":" time-second [time-secfrac]
+full-time      = partial-time time-offset
+time-hour      = 2DIGIT        ; 00-23
+time-minute    = 2DIGIT        ; 00-59
+time-second    = 2DIGIT        ; 00-59 (leap seconds are not supported)
+time-secfrac   = "." 1*DIGIT
+time-offset    = ("Z" / "z") / time-numoffset
+time-numoffset = ("+" / "-") time-hour ":" time-minute
+```
+
+The date/time literal is a single lexical unit: the `@` sigil and the entire date/time body are consumed atomically, so the `:` characters inside `partial-time` never interact with `kv-sep`. The body must be followed by a delimiter or the end of input (see § Validity Constraints).
+
 ## Validity Constraints
 
 The following constraints are not directly expressible in ABNF but must be enforced:
 
 1. **Configuration Constraints**:
-   - The literal values of the four structural parameters are pairwise distinct and conflict-free with the fixed `comment-mark` (`"#"`).
+   - The literal values of the four structural parameters are pairwise distinct and conflict-free with `comment-mark` (`"#"`).
+   - No literal parameter value may contain `@` (reserved for date/time literals).
    - `<INDENT>` / `<DEDENT>` are bound as a pair to `lbrace` / `rbrace`.
 
 2. **Style and Surface Constraints**:
@@ -191,6 +220,7 @@ The following constraints are not directly expressible in ABNF but must be enfor
    - Keys in the same map must be unique.
    - A single block must not mix keyed and anonymous items.
    - A lexical run matching both `number` and `bare-key` (e.g. `42`) is a **key** if and only if it is followed (after optional whitespace) by `kv-sep`; its key value is the literal string.
+   - A `date-time` literal must denote a calendar-valid date and time (`2026-02-30`, `25:00:00`, etc. are invalid) and must be followed by a delimiter (whitespace, a separator, or `comment-mark`) or the end of input. Outside strings, every `@` must begin a well-formed `date-time`; any other `@` is a syntax error.
    - UTF-8 encoding must be valid.
    - Control characters (except tab, LF, and CR) must not appear outside of string values.
 

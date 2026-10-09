@@ -39,7 +39,7 @@ The surface syntax of a FlexConf document is determined by four parameters:
 | `LeftBrace` | `{` | literal string or `<INDENT>` | Opens a block |
 | `RightBrace` | `}` | literal string or `<DEDENT>` | Closes a block |
 
-The comment marker is **not** a syntax parameter: comments are always introduced by `#` (see § Comments).
+Comments are introduced by `#` (see § Comments).
 
 **Literal values** are quoted strings of one or more characters.
 
@@ -51,7 +51,7 @@ The comment marker is **not** a syntax parameter: comments are always introduced
 
 A configuration is **valid** only if:
 
-1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace or string quote characters.
+1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace, no string quote characters, and no `@` character (reserved for date/time literals, § Dates and Times).
 2. No literal separator is a prefix of the comment marker `#`, and `#` is not a prefix of any literal separator.
 3. `<INDENT>` and `<DEDENT>` are bound as a pair: `LeftBrace = <INDENT>` if and only if `RightBrace = <DEDENT>`.
 4. `KeyValueSeparator` is always literal.
@@ -95,7 +95,7 @@ Individual parameters may be overridden on top of a style (e.g. `SET STYLE INDEN
 
 ### Comments
 
-- Comments begin with `#` and continue to the end of the line. The comment marker is fixed: it cannot be changed by pragma directives or configuration.
+- Comments begin with `#` and continue to the end of the line.
 - Comments may appear on their own line or after values on the same line.
 - Comments are ignored by parsers; a comment-only line produces no tokens.
 - The pragma prefix `#?>` is fixed meta-syntax, recognized before the configuration takes effect (see § Pragma Directives).
@@ -125,6 +125,11 @@ FlexConf supports the following primitive values:
 
 - **Booleans**: `true` and `false`
 - **Null**: `null`
+- **Dates and Times**: bare literals introduced by the reserved sigil `@` (§ Dates and Times):
+  - Offset date-time: `@1979-05-27T07:32:00Z`, `@1979-05-27T00:32:00.999-07:00`
+  - Local date-time: `@1979-05-27T07:32:00`
+  - Local date: `@1979-05-27`
+  - Local time: `@07:32:00`
 
 #### Collections
 
@@ -209,6 +214,32 @@ bool1: true
 bool2: false
 nothing: null
 ```
+
+#### Dates and Times
+
+Date and time values are bare literals introduced by the sigil `@`, using a profile of RFC 3339 / ISO 8601. Four forms exist:
+
+```flexconf
+odt1: @1979-05-27T07:32:00Z         # offset date-time (UTC)
+odt2: @1979-05-27T00:32:00-07:00    # offset date-time (numeric offset)
+odt3: @1979-05-27T00:32:00.999999Z  # fractional seconds
+ldt:  @1979-05-27T07:32:00          # local date-time (no offset)
+date: @1979-05-27                   # local date
+time1: @07:32:00                    # local time
+time2: @07:32:00.5                  # local time with fractional seconds
+```
+
+Rules:
+
+- The `@` sigil is **fixed meta-syntax**, like the pragma prefix `#?>`: it never changes with the syntax parameters, and `@` must not appear in any literal syntax-parameter value (§ Syntax Parameters).
+- The date and time parts of a date-time are separated by `T` or `t` only; a space separator is not permitted.
+- The offset suffix is `Z`/`z` (UTC) or `±HH:MM`. Timezone database names are not used; a numeric offset is the only way to express zone information.
+- Seconds range from `00` to `59`; leap seconds are not supported.
+- Fractional seconds may carry any number of digits; implementations should support at least microsecond precision and may truncate beyond it.
+- Values must denote calendar-valid dates and times: `@2026-02-30` or `@25:00:00` is a `SyntaxError`.
+- A date/time literal must be followed by a structural delimiter (a separator, a comment, or whitespace) or by the end of input; e.g. `@2026-10-09x` is a `SyntaxError`.
+- Outside string values, every `@` must introduce a well-formed date/time literal; any other use of `@` is a `SyntaxError`. In particular, a date/time literal is never a key.
+- **Host mapping**: an offset date-time maps to a timezone-aware date-time type, a local date-time to a naive date-time type, a local date to a date type, and a local time to a time type.
 
 ### Block Structure
 
@@ -420,6 +451,7 @@ The following conditions make a FlexConf document invalid:
    - In the BRACE style: missing `ItemSeparator` between items
 6. **Unmatched braces**: Every `LeftBrace` (literal or virtual) must have a matching `RightBrace`.
 7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, ...).
+8. **Invalid date/time literal**: an `@` outside a string that does not introduce a well-formed, calendar-valid date/time literal (§ Dates and Times).
 
 ### Filename Extension
 

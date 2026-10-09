@@ -197,8 +197,8 @@ check("API style_indent(key_value_separator='=')",
       "a = 1\n", config=flexconf.Config.style_indent(key_value_separator='='),
       expected={'a': 1})
 
-# 18. The comment marker is '#' — fixed, not configurable
-check("CommentMarker pragma rejected (not configurable)",
+# 18. Comments start with '#'
+check("CommentMarker pragma rejected",
       "#?> SET CommentMarker '//'\n{}\n",
       expect_error="Unknown pragma parameter 'CommentMarker'")
 check("'//' is not a comment", "{ a: 1 // oops\n}\n",
@@ -233,6 +233,50 @@ check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
 check("indent doc rejected when pragmas declare literal braces",
       "#?> SET ItemSeparator ';'\nserver:\n  a: 1\n",
       expect_error="SET STYLE INDENT")
+
+# 20. Date/time literals: '@' sigil, RFC 3339 profile (Language SPEC:
+#     Dates and Times)
+from datetime import date, datetime, time, timedelta, timezone
+
+check("offset date-time Z", "x: @1979-05-27T07:32:00Z\n",
+      expected={'x': datetime(1979, 5, 27, 7, 32, tzinfo=timezone.utc)})
+check("offset date-time numeric offset",
+      "x: @1979-05-27T00:32:00.999-07:00\n",
+      expected={'x': datetime(1979, 5, 27, 0, 32, 0, 999000,
+                              tzinfo=timezone(timedelta(hours=-7)))})
+check("lowercase t and z", "x: @1979-05-27t07:32:00z\n",
+      expected={'x': datetime(1979, 5, 27, 7, 32, tzinfo=timezone.utc)})
+check("local date-time", "x: @1979-05-27T07:32:00\n",
+      expected={'x': datetime(1979, 5, 27, 7, 32)})
+check("local date", "x: @1979-05-27\n", expected={'x': date(1979, 5, 27)})
+check("local time", "x: @07:32:00\n", expected={'x': time(7, 32)})
+check("local time with fractional seconds", "x: @07:32:00.5\n",
+      expected={'x': time(7, 32, 0, 500000)})
+check("date-time as anonymous map items (BRACE)",
+      "{ @2026-01-01, @12:00:00 }",
+      expected=[date(2026, 1, 1), time(12, 0)])
+check("date as anonymous map items (INDENT)",
+      "items:\n  @2026-01-01\n  @2026-01-02\n",
+      expected={'items': [date(2026, 1, 1), date(2026, 1, 2)]})
+check("date-time followed by a comment", "x: @2026-10-09 # today\n",
+      expected={'x': date(2026, 10, 9)})
+
+# 21. Date/time error paths
+check("calendar-invalid date", "x: @2026-02-30\n",
+      expect_error="Invalid date/time literal")
+check("time hour out of range", "x: @25:00:00\n",
+      expect_error="Invalid date/time literal")
+check("malformed '@' literal", "x: @foo\n",
+      expect_error="must introduce a well-formed date/time literal")
+check("date-time must be delimiter-terminated", "x: @2026-10-09x\n",
+      expect_error="must introduce a well-formed date/time literal")
+check("space separator is not permitted", "x: @2026-10-09 12:13:14\n",
+      expect_error="Expected key")
+check("incomplete time part", "x: @2026-10-09T12:13\n",
+      expect_error="must introduce a well-formed date/time literal")
+check_raises("Config conflict: '@' reserved for date/time literals",
+             lambda: flexconf.Config(key_value_separator='@'),
+             "Invalid configuration")
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
