@@ -42,6 +42,16 @@ COMMENT_MARKER = '#'
 # and no literal parameter value may contain it.
 DATETIME_SIGIL = '@'
 
+# '!' is reserved meta-syntax (Language SPEC: Reserved Words and Symbols).
+# It currently has no production, so outside a string it is always a
+# SyntaxError; nothing may bind it as a parameter value either.
+RESERVED_SIGIL = '!'
+
+# Symbols that no literal syntax-parameter value may contain, paired with the
+# reason used in diagnostics.
+RESERVED_IN_PARAMS = ((DATETIME_SIGIL, 'reserved for date/time literals'),
+                      (RESERVED_SIGIL, 'reserved for future use'))
+
 # RFC 3339 profile (ABNF SPEC: Date and Time Types). '@' is not part of the
 # captured body. The date-time separator may be 'T', 't', or exactly one
 # space (RFC 3339 §5.6 readability form); lowercase 'z' is accepted too. The
@@ -158,9 +168,9 @@ class Config:
                 fail(f"{name} must not contain whitespace")
             if any(q in v for q in '"\'`'):
                 fail(f"{name} must not contain string quote characters")
-            if DATETIME_SIGIL in v:
-                fail(f"{name} must not contain {DATETIME_SIGIL!r} "
-                     "(reserved for date/time literals)")
+            for sigil, why in RESERVED_IN_PARAMS:
+                if sigil in v:
+                    fail(f"{name} must not contain {sigil!r} ({why})")
             for other_name, other in seen:
                 if v == other:
                     fail(f"{name} {v!r} conflicts with {other_name}")
@@ -238,8 +248,11 @@ class Lexer:
     def _scan_pragmas(self, base: Config):
         # Pragma directives (#?>) are fixed meta-syntax: they are recognized
         # before the configuration takes effect (Language SPEC: Pragma
-        # Directives). Only blank lines, '#' comments, and pragma lines may
-        # precede data.
+        # Directives). They form one contiguous block at the very start of
+        # the document; only whitespace, blank lines, and '#' comments may
+        # precede the block, and the first line that is not a pragma line
+        # ends it. A '#?>' line outside the block is a SyntaxError, which
+        # _skip_comment() raises when tokenization reaches it.
         values = {field: getattr(base, field) for field in PARAM_FIELDS.values()}
         pos = 0
         last_line = 1
@@ -247,16 +260,17 @@ class Lexer:
         for raw_line in self.text.split('\n'):
             stripped = raw_line.strip()
             line_end = pos + len(raw_line) + 1  # +1 for the '\n'
-            if not stripped or stripped.startswith('#') and not stripped.startswith('#?>'):
-                pos = line_end
-                continue
-            if stripped.startswith('#?>'):
+            is_pragma = stripped.startswith('#?>')
+            if found:
+                if not is_pragma:
+                    break  # the pragma block is contiguous
+            elif not (is_pragma or not stripped or stripped.startswith('#')):
+                break  # data begins before any pragma
+            if is_pragma:
                 last_line = self.text.count('\n', 0, pos) + 1
                 self._apply_pragma(stripped[len('#?>'):].strip(), values, last_line)
                 found = True
-                pos = line_end
-                continue
-            break
+            pos = line_end
         try:
             config = replace(base, **values)
         except FlexConfError as e:
@@ -328,8 +342,12 @@ class Lexer:
         # Characters that terminate a bare literal: whitespace plus the first
         # character of every literal separator and the '#' comment marker.
         # '{'/'}' are always delimiters so they can be diagnosed as style
-        # mixing in the indentation surface.
-        delims = set(' \t\n\r{}#')
+        # mixing in the indentation surface. The reserved meta-syntax symbols
+        # '@' and '!', the string delimiters, and the comment marker all
+        # terminate a bare lexical run rather than being absorbed into it
+        # (Language SPEC: Lexical Boundaries — 'a@b' / "a'b" are errors,
+        # never identifiers).
+        delims = set(" \t\n\r{}#@!'\"")
         for s in (self.config.key_value_separator, self.config.item_separator,
                   self.config.left_brace, self.config.right_brace):
             if s not in SYMBOLIC_VALUES:
@@ -389,11 +407,20 @@ class Lexer:
                 self._skip_comment()
                 continue
 
-            # 3. Handle Structure (literal separators from the configuration)
+            # 3. Reserved meta-syntax with no production. '@' is handled by
+            #    _parse_primitive below (the date/time sigil); '!' currently
+            #    has no meaning, so it is an error outside a string.
+            if char == RESERVED_SIGIL:
+                raise FlexConfError(
+                    f"{RESERVED_SIGIL!r} is reserved meta-syntax and may not "
+                    "appear bare outside a string; quote it to use it as data",
+                    self.line, self.col)
+
+            # 4. Handle Structure (literal separators from the configuration)
             if self._match_structure():
                 continue
 
-            # 4. Handle Primitives
+            # 5. Handle Primitives
             token = self._parse_primitive()
             if token:
                 self.tokens.append(token)
@@ -551,6 +578,14 @@ class Lexer:
                 self.pos += 1
 
     def _skip_comment(self):
+        # The head pragma block was consumed before tokenization, so a '#?>'
+        # reached here is outside the block: it is reserved meta-syntax and
+        # must not be silently treated as a comment (Language SPEC: Pragma
+        # Directives).
+        if self.text.startswith('#?>', self.pos):
+            raise FlexConfError(
+                "'#?>' pragma directives must form a contiguous block at the "
+                "beginning of the document", self.line, self.col)
         while self.pos < len(self.text) and self.text[self.pos] != '\n':
             self._advance()
 
@@ -624,6 +659,11 @@ class Lexer:
             return TokenType.BOOLEAN, False
         if raw == 'null':
             return TokenType.NULL, None
+
+        # Special floats (Language SPEC: Numbers): inf / nan, optionally
+        # signed, lower case. float() accepts the sign forms directly.
+        if raw.lstrip('+-') in ('inf', 'nan'):
+            return TokenType.NUMBER, float(raw)
 
         # Number
         try:

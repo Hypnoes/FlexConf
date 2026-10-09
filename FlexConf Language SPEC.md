@@ -51,12 +51,80 @@ Comments are introduced by `#` (see § Comments).
 
 A configuration is **valid** only if:
 
-1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace, no string quote characters, and no `@` character (reserved for date/time literals, § Dates and Times).
+1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace, no string quote characters, and none of the reserved meta-syntax symbols `@` and `!` (§ Reserved Words and Symbols).
 2. No literal separator is a prefix of the comment marker `#`, and `#` is not a prefix of any literal separator.
 3. `<INDENT>` and `<DEDENT>` are bound as a pair: `LeftBrace = <INDENT>` if and only if `RightBrace = <DEDENT>`.
 4. `KeyValueSeparator` is always literal.
 
 An invalid configuration raises an *Invalid Configuration Error* before any parsing takes place.
+
+### Reserved Words and Symbols
+
+Beyond the four configurable syntax parameters, FlexConf reserves a fixed vocabulary of words and symbols. Whether an entry is reserved depends on **where** it appears, so the lists below are grouped by context rather than by spelling.
+
+#### Fixed meta-syntax
+
+These symbols are independent of the syntax parameters and can never be re-bound or shadowed by a custom separator. A literal syntax-parameter value must not contain `@` or `!`; the `#` prefix rule applies in addition (§ Syntax Parameters):
+
+| Symbol | Role | Defined in |
+| --- | --- | --- |
+| `#` | Introduces a comment that runs to the end of the line. | § Comments |
+| `#?>` | Introduces a pragma directive; pragmas form a contiguous block at the head of a document. | § Pragma Directives |
+| `@` | Introduces a date/time literal; outside strings, every `@` must begin a well-formed, calendar-valid date/time. | § Dates and Times |
+| `!` | Reserved for future use. No production assigns it a meaning, so a bare `!` outside a string is a `SyntaxError`. | § Validity Rules |
+
+#### Pragma vocabulary
+
+The words below are reserved **only on a line that begins with `#?>`**. Anywhere else they are ordinary text, and may be used as bare keys or inside quoted values.
+
+| Word | Position | Meaning |
+| --- | --- | --- |
+| `SET` | first word after `#?>` | Introduces a directive. |
+| `STYLE` | after `SET` | Selects a named style preset. |
+| `BRACE`, `INDENT` | after `STYLE` | Style names; case-sensitive. |
+| `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace` | after `SET` | Syntax-parameter names; case-sensitive. |
+| `<INDENT>`, `<DEDENT>`, `<NEWLINE>` | value position | Symbolic values naming virtual tokens. |
+
+#### Literal keywords
+
+These bare words carry a built-in type and are matched case-sensitively in their lower-case spellings — `TRUE` is not a boolean, it is a bare identifier.
+
+| Word | Type |
+| --- | --- |
+| `true`, `false` | Boolean |
+| `null` | Null |
+| `inf`, `+inf`, `-inf`, `nan` | Special floats |
+
+A bare word that is exactly `true`, `false`, or `null` is lexed as that keyword **in every position**, including before a `KeyValueSeparator`. Such a word therefore cannot be used as a bare key; write it as a quoted key (§ Keys) to use it as one. The special floats are recognized only in value position.
+
+#### Delimiters with fixed roles
+
+The characters `"`, `'`, and `` ` `` delimit strings and quoted keys, and `\` introduces an escape inside a basic (double-quoted) string. These roles are not configurable, and a literal syntax-parameter value must not contain `"`, `'`, or `` ` `` (§ Syntax Parameters). The structural characters `:`, `,`, `{`, and `}` are reserved only while the effective configuration binds them to a role.
+
+#### Lexical Boundaries
+
+The reserved symbols above are lexically active at **both** ends of a token. Each of them can *open* a token — `'` and `"` open strings, `` ` `` opens a quoted key, `#` opens a comment (and `#?>` a pragma), `@` opens a date/time — and each of them **terminates a bare lexical run**: a bare identifier or numeric candidate stops at the first reserved symbol and never contains one.
+
+A bare lexical run may therefore contain only the characters that § Keys allows for bare identifiers, together with the number grammar's characters (sign, fraction point, exponent marker, digit separators, and the `0x`/`0o`/`0b` radix prefixes). In particular `a'b`, `a"b`, `` a`b ``, `a#b`, `a@b`, and `a!b` are all invalid: the reserved symbol ends the run and then takes its own role (a quote opens a string, `#` starts a comment, `@` must introduce a well-formed date/time, `!` is a `SyntaxError`). Quote the text (`"a@b"`) to keep it as data.
+
+This makes bare values a **closed set**. Outside a string, a bare value can only be:
+
+- a Boolean — `true`, `false`
+- Null — `null`
+- a Number — an integer or float, including the special floats `inf`, `+inf`, `-inf`, `nan`
+- a date/time literal introduced by `@`
+
+Any other bare word in value position is a `SyntaxError`. A bare word is a key if and only if it is followed by a `KeyValueSeparator` (§ Keys); strings, which have no bare form, must always be quoted.
+
+#### Usage Notes
+
+- **`#` is always a comment.** Outside a string, everything from `#` to the end of the line is discarded, and a comment-only line produces no tokens. A `#` inside an unquoted key or value is never data; quote the text (`"a#b"`) to keep it.
+- **`@` always begins a date/time.** A literal `@` — for example in an email address — must appear inside a quoted string (`"user@example.com"`). `@` is also forbidden in every literal parameter value.
+- **`!` is reserved and currently has no meaning.** A bare `!` outside a string is a `SyntaxError`; quote it (`"a!b"`) to use it as data, and do not use it in a literal parameter value.
+- **`#?>` is reserved, and pragmas are one contiguous block.** The pragma block is a contiguous run of `#?>` lines at the very start of the document, preceded only by whitespace, blank lines, and `#` comments. Outside a string value, a `#?>` line anywhere else — after the block, or after data has begun — is a `SyntaxError`, not a comment, so a misplaced directive is never silently ignored. Write `# ?>` when a comment is intended.
+- **Bare words are not string values.** A value must be a string, a number, a boolean, null, or a date/time; `host: localhost` is invalid — write `host: "localhost"`.
+- **A numeric-looking bare key is the literal string.** Per § Keys, `42:` yields the string key `"42"`. Implementations must preserve the source spelling of such a key; they must not normalize it through a numeric conversion.
+- **In the indentation surface, `{` and `}` are not data.** Encountering a literal brace outside a string is a `SyntaxError` (§ Style Resolution and Surface Detection); quote the text (`"{a}"`) to keep it.
 
 ### Styles
 
@@ -418,7 +486,7 @@ The effective configuration of a document is resolved as follows:
 
 Pragmas start with `#?>` and redefine syntax parameters for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, because pragmas are processed before the configuration takes effect.
 
-Pragmas must appear at the very beginning of the document, preceded only by whitespace, blank lines, or `#` comments. Two directive forms exist:
+Pragmas form a single **pragma block**: a contiguous run of `#?>` lines at the very beginning of the document, preceded only by whitespace, blank lines, or `#` comments. No comment or blank line may appear between two pragma lines — the block ends at the first line that is not a pragma line. Outside a string value, a `#?>` line outside the block is a `SyntaxError`, not a comment. Two directive forms exist:
 
 ```flexconf
 #?> SET STYLE INDENT           " named preset: binds the four structural parameters atomically
@@ -432,6 +500,7 @@ Pragmas must appear at the very beginning of the document, preceded only by whit
 Rules:
 
 - Directives apply in order of appearance; later directives override earlier ones.
+- The pragma block is contiguous: a comment or blank line between two directives ends it, and any later `#?>` line is a `SyntaxError`.
 - A single-parameter value is either a quoted string or one of the symbolic values `<INDENT>`, `<DEDENT>`, `<NEWLINE>`.
 - `STYLE` accepts the style names `BRACE` and `INDENT` (case-sensitive).
 - An unknown parameter name, unknown style name, or illegal value is a `SyntaxError`.
@@ -452,7 +521,8 @@ The following conditions make a FlexConf document invalid:
    - In the BRACE style: missing `ItemSeparator` between items
 6. **Unmatched braces**: Every `LeftBrace` (literal or virtual) must have a matching `RightBrace`.
 7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, ...).
-8. **Invalid date/time literal**: an `@` outside a string that does not introduce a well-formed, calendar-valid date/time literal (§ Dates and Times).
+8. **Invalid date/time literal or reserved symbol**: an `@` outside a string that does not introduce a well-formed, calendar-valid date/time literal, or a bare `!` outside a string (§ Dates and Times, § Reserved Words and Symbols).
+9. **Misplaced pragma**: a `#?>` line that is not part of the contiguous pragma block at the beginning of the document (§ Pragma Directives).
 
 ### Filename Extension
 

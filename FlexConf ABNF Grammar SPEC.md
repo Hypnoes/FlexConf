@@ -31,6 +31,31 @@ comment-mark  = "#"
 
 Symbolic values `<INDENT>`, `<DEDENT>`, and `<NEWLINE>` denote virtual tokens generated from line-structure analysis. When `item-sep` is bound to `<NEWLINE>`, every line ending produces one `item-sep` token, so a blank line produces two consecutive `item-sep` tokens (this ends an anonymous map item, see the Language Specification).
 
+## Reserved Tokens
+
+In addition to the parameterized terminals, FlexConf has a fixed vocabulary that no configuration can re-bind. The terminals below are *fixed meta-syntax*, independent of `kv-sep`, `item-sep`, `lbrace`, and `rbrace`:
+
+| Terminal | Instantiation | Constraints |
+| --- | --- | --- |
+| `comment-mark` | `"#"` | No literal parameter value may equal `"#"` or share a prefix with it. |
+| pragma prefix | `"#?>"` | Part of a contiguous pragma block at the head of the document, before surface detection; outside a string, a `#?>` line outside that block is a syntax error, not a comment. |
+| date/time sigil | `"@"` | No literal parameter value may contain it; outside strings, every `@` must open a well-formed `date-time`. |
+| reserved sigil | `"!"` | Reserved for future use and given no production; no literal parameter value may contain it, and a bare `!` outside a string is a syntax error. |
+
+The pragma prefix, the date/time sigil, and the reserved `!` are not ABNF rules of the parameterized grammar; they are consumed by the lexer before and around it, which is what makes them fixed. The reserved symbols are **lexically active at both ends of a token**: the string delimiters, `` ` ``, `comment-mark`, `@`, and `!` all terminate a bare lexical run, so none of them can be absorbed into an identifier (`a'b`, `a@b`, `a!b`, and so on are syntax errors). The pragma vocabulary itself (`SET`, `STYLE`, `BRACE`, `INDENT`, `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`, `<INDENT>`, `<DEDENT>`, `<NEWLINE>`) is reserved **only** inside a `pragma-line`; elsewhere those words are ordinary `bare-key`s.
+
+Bare literals with a built-in type are reserved words rather than identifiers:
+
+| Word | Production | Reserved status |
+| --- | --- | --- |
+| `true`, `false` | `boolean` | Never an `IDENTIFIER`; cannot be used as a bare key. |
+| `null` | `null` | Never an `IDENTIFIER`; cannot be used as a bare key. |
+| `inf`, `nan` (optionally signed) | `special-float` | Value position only; not special as a bare key. |
+
+For a bare lexical run that is exactly `true`, `false`, or `null`, the `boolean` / `null` production takes precedence over `bare-key`, so a `key` written this way must use `quoted-key` (or a `string`) instead. This is the keyword counterpart of the rule in § Validity Constraints that a run matching both `number` and `bare-key` is a key if and only if it is followed by `kv-sep`.
+
+ABNF treats quoted-string terminals as case-insensitive by default; for FlexConf the keyword literals, the style names `BRACE` / `INDENT`, and the pragma parameter names are matched **case-sensitively** in their listed spellings. The grammar should be read as if these terminals used `%s` string notation, so `TRUE`, `True`, `indent`, and `itemseparator` do not match.
+
 ## Core Definitions
 
 ```abnf
@@ -71,7 +96,11 @@ explicit-document = block
 ; document, and every item-sep below is a virtual <NEWLINE> token)
 implicit-document = block-content
 
-; Pragma directives (fixed "#?>" meta-syntax, independent of comment-mark)
+; Pragma directives (fixed "#?>" meta-syntax, independent of comment-mark).
+; The pragma block is a contiguous run of pragma lines at the very start of
+; the document; only whitespace, blank lines, and comment lines may precede
+; it. A "#?>" line that is not part of this block is a syntax error, so the
+; generic comment production below does not cover it.
 pragma-section = 1*(pragma-line NEWLINE)
 pragma-line    = "#?>" *(%x01-09 / %x0B-0C / %x0E-10FFFF)
 ```
@@ -204,7 +233,7 @@ The following constraints are not directly expressible in ABNF but must be enfor
 
 1. **Configuration Constraints**:
    - The literal values of the four structural parameters are pairwise distinct and conflict-free with `comment-mark` (`"#"`).
-   - No literal parameter value may contain `@` (reserved for date/time literals).
+   - No literal parameter value may contain `@` (reserved for date/time literals) or `!` (reserved for future use).
    - `<INDENT>` / `<DEDENT>` are bound as a pair to `lbrace` / `rbrace`.
 
 2. **Style and Surface Constraints**:
@@ -221,6 +250,8 @@ The following constraints are not directly expressible in ABNF but must be enfor
    - A single block must not mix keyed and anonymous items.
    - A lexical run matching both `number` and `bare-key` (e.g. `42`) is a **key** if and only if it is followed (after optional whitespace) by `kv-sep`; its key value is the literal string.
    - A `date-time` literal must denote a calendar-valid date and time (`2026-02-30`, `25:00:00`, etc. are invalid) and must be followed by a delimiter (whitespace, a separator, or `comment-mark`) or the end of input. Outside strings, every `@` must begin a well-formed `date-time`; any other `@` is a syntax error.
+   - Outside a string, a `#?>` line outside the contiguous head pragma block is a syntax error, not a comment.
+   - Outside strings a bare `!` is a syntax error. No reserved symbol (`'`, `"`, `` ` ``, `#`, `@`, `!`) may be absorbed into a `bare-key` or any other bare lexical run; each terminates the run and then takes its own role. A bare value is therefore restricted to `boolean`, `null`, `number` (including `special-float`), and `date-time`; every other bare word in value position is a syntax error.
    - UTF-8 encoding must be valid.
    - Control characters (except tab, LF, and CR) must not appear outside of string values.
 

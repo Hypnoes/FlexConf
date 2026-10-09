@@ -24,7 +24,7 @@ Although this design has basically taken shape, there are still some details und
 | `FlexConf ABNF Grammar SPEC.md` | Machine-oriented ABNF grammar capturing the full syntax. |
 | `FlexConf Parser SPEC.md` | Architectural requirements for compliant parser implementations. |
 | `flexconf.py` | Python reference implementation: lexer, parser, AST, and interpreter, with a demo entry point. |
-| `test_flexconf.py` | Self-contained test script (45 checks) covering both canonical styles, pragma-driven customization, date/time literals, and the AST layer. |
+| `test_flexconf.py` | Self-contained test script (71 checks) covering both canonical styles, pragma-driven customization, date/time literals, reserved meta-syntax, and the AST layer. |
 | `examples/` | Sample `.fc` files demonstrating the INDENT (`conf_1.fc`) and BRACE (`conf_2.fc`) styles. |
 
 ---
@@ -44,6 +44,55 @@ Across all styles, FlexConf supports:
 - Pragma directives (`#?> SET ...`) that customize any syntax parameter per file, e.g. `#?> SET ItemSeparator ';'` or `#?> SET STYLE INDENT`.
 
 See `FlexConf Language SPEC.md` for the full narrative, including the whitespace significance rules, conversion rules, and validity constraints.
+
+---
+
+## Reserved Words and Symbols
+
+FlexConf reserves a small set of words and symbols on top of the four configurable syntax parameters. Some are fixed meta-syntax that no configuration can change; others are reserved only in a particular position. Misusing one is a common source of `SyntaxError`s, so the tables below pair each entry with the context in which it is safe.
+
+### Fixed meta-syntax
+
+| Symbol | Role | How to use it as data |
+| --- | --- | --- |
+| `#` | Runs a comment to the end of the line. | Put the `#` inside a quoted string: `"a#b"`. |
+| `#?>` | Starts a pragma directive; pragmas form a contiguous block at the head of the file. | Write `# ?>` if a comment is intended; a `#?>` outside the block is an error, not a comment. |
+| `@` | Starts a date/time literal such as `@2026-10-09`. | Quote anything else containing `@`: `"user@example.com"`. |
+| `!` | Reserved for future use; it currently has no meaning. | Quote it: `"a!b"` — a bare `!` is an error. |
+
+A separator value must not contain `@` or `!`, and the comment marker `#` must not equal a separator or share a prefix with one. `#?>` is recognized only as part of the head pragma block, so it is not a separator concern.
+
+### Context-reserved words
+
+| Words | Reserved where | Free where |
+| --- | --- | --- |
+| `SET`, `STYLE`, `BRACE`, `INDENT`, `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`, `<INDENT>`, `<DEDENT>`, `<NEWLINE>` | On a line beginning with `#?>` — these are the only accepted pragma vocabulary, and matching is case-sensitive. | Anywhere else they are ordinary text; `SET: 1` is a valid key. |
+| `true`, `false`, `null` | Everywhere: they are lexed as literal types, so they cannot be bare keys. | Quote them to use them as keys. |
+| `inf`, `+inf`, `-inf`, `nan` | Value position, where they denote special floats. | As bare keys they are allowed too: `inf: 1` makes the string key `"inf"`. |
+
+The string and key delimiters are fixed as well: `"` and `'` open strings, `` ` `` opens a quoted key, and `\` starts an escape inside a basic double-quoted string. They are never configurable, and a separator value may not contain any of them. By contrast, the structural characters `:`, `,`, `{`, and `}` are reserved only while the effective configuration binds them — change the parameter and the character becomes ordinary.
+
+### Watch Out
+
+- **`#` always starts a comment** outside a string. `key: value  # note` is fine, but `key: a#b` is not the string `"a#b"` — quote it.
+- **Every `@` outside a string must begin a valid date/time.** `user@example.com` is a `SyntaxError`; `"user@example.com"` is a string. A malformed literal such as `@foo` or a calendar-invalid one such as `@2026-02-30` also fails.
+- **`!` is reserved and currently meaningless.** A bare `!` outside a string is a `SyntaxError`; quote it (`"a!b"`) to use it as data, and keep it out of custom separator values.
+- **`#?>` is reserved, and pragmas are one contiguous block.** They must be a contiguous run of `#?>` lines at the very start of the file, with only whitespace, blank lines, or comments before them. A comment or blank line between two directives ends the block, and any later `#?>` line (outside a quoted string) is a `SyntaxError` — never silently treated as a comment.
+- **Reserved symbols end a bare word.** `a'b`, `a"b`, `` a`b ``, `a#b`, `a@b`, and `a!b` are all invalid: the symbol terminates the word and then takes its own role (a quote opens a string, `#` starts a comment, `@` must begin a date/time, `!` is an error). Quote the text (`"a@b"`) to keep it as data.
+- **A bare value is a closed set.** Outside strings it can only be `true`/`false`, `null`, a number (including `inf`/`nan`), or a `@` date/time; `host: localhost` fails — write `host: "localhost"`.
+- **`true`/`false`/`null` cannot be bare keys.** `true: 1` fails because the word is lexed as a boolean; quote it (`"true": 1`, or a backtick-quoted key in spec terms).
+- **A numeric-looking bare key is a string key.** The spec treats the key as its literal spelling; the reference parser instead normalizes through the numeric value, so `+99:` yields `"99"`, `1_000:` yields `"1000"`, `1.50:` yields `"1.5"`, and `5e2:` yields `"500.0"`. Quote the key when the exact spelling matters.
+- **Custom separators are constrained.** A separator must be non-empty, contain no whitespace and no `"`, `'`, `` ` ``, or `@`, must not be a prefix of another separator, and must not collide with `#`. So `#?> SET ItemSeparator '@'` is invalid, and `#?> SET ItemSeparator ':,'` is invalid because `:,` has the default `:` as a prefix.
+- **In the INDENT style, `{` and `}` are not data.** A literal brace outside a string is a `SyntaxError`; quote it (`"{a}"`).
+
+### Reference Parser Note
+
+The bundled `flexconf.py` is a demonstration, not a complete implementation, and it diverges from the specs in a few places that involve reserved words:
+
+- It keeps the backticks of a quoted key in the key string, so prefer a double-quoted key (`"true": 1`) in its examples; the normative quoted-key form is the backtick.
+- It does not implement hex/octal/binary literals (`0x...`, `0o...`, `0b...`) or triple-quoted strings, and it does not process `\` escapes inside basic strings.
+
+Use the specifications as the normative reference and treat the reference parser as a learning aid.
 
 ---
 

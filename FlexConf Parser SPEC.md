@@ -22,7 +22,7 @@ A FlexConf implementation typically consists of three main components:
 ### 3.1. Input Processing
 
 - The input must be a UTF-8 encoded stream.
-- **Pragma Scanning**: Before standard tokenization, the lexer must scan the beginning of the file for pragma directives (`#?>`). The pragma prefix is fixed meta-syntax, recognized before the configuration takes effect. Pragmas are applied in order of appearance — `SET STYLE <name>` binds the four structural parameters atomically, subsequent single-parameter `SET` directives override individual values — and the resulting configuration is validated (§ 7) before any further processing. Unknown parameter names, unknown style names, and illegal values are `SyntaxError`s.
+- **Pragma Scanning**: Before standard tokenization, the lexer must scan the beginning of the file for pragma directives (`#?>`). The pragma prefix is fixed meta-syntax, recognized before the configuration takes effect. The directives form a single **contiguous block** at the very start of the document, preceded only by whitespace, blank lines, and `#` comments; the block ends at the first line that is not a pragma line. Pragmas are applied in order of appearance — `SET STYLE <name>` binds the four structural parameters atomically, subsequent single-parameter `SET` directives override individual values — and the resulting configuration is validated (§ 7) before any further processing. Unknown parameter names, unknown style names, and illegal values are `SyntaxError`s. Outside a string value, a `#?>` line outside the block is a `SyntaxError`, not a comment, so a misplaced directive is never silently ignored.
 
 ### 3.2. Style Resolution and Surface Detection
 
@@ -60,6 +60,18 @@ When the indentation surface is active, the lexer derives `LBRACE` / `RBRACE` / 
 - **`RBRACE` emission**: When the indentation level decreases, one `RBRACE` per level is emitted (popping the stack).
   - *Error*: If the new level does not match a level on the stack, raise an `IndentationError`.
 - **`ITEM_SEP` emission**: Each line ending produces one `ITEM_SEP`. Comment-only lines generate no tokens. Blank lines generate `ITEM_SEP` tokens (a blank line therefore yields a pair of consecutive `ITEM_SEP`s, which ends an anonymous map item, § 4.2); a blank line that precedes a dedent is emitted at the level whose items it separates.
+
+### 3.5. Reserved Lexemes
+
+The lexer must resolve the following before it consults the effective configuration, so that no custom separator or style can shadow them:
+
+- **Fixed meta-syntax** — `#` (comment to the end of the line), `#?>` (pragma prefix, part of the contiguous head block, § 3.1), `@` (date/time sigil, § 3.3), and `!` (reserved for future use, no production). None of them may appear in a literal syntax-parameter value; every `@` outside a string must open a `DATETIME` token and every other `@` is a `SyntaxError`, and a bare `!` outside a string is likewise a `SyntaxError`. Both `@` and `!` terminate a bare lexical run, so they are never absorbed into an identifier.
+- **Keyword literals** — `true`, `false`, `null` (case-sensitive, lower case) and the special floats `inf`, `nan`, optionally signed. Keyword recognition precedes identifier classification, so a bare `true`, `false`, or `null` is never emitted as `IDENTIFIER`; a key written this way must be quoted in the source (Language Specification, § Reserved Words and Symbols).
+- **Pragma vocabulary** — `SET`, `STYLE`, `BRACE`, `INDENT`, the four parameter names (`KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`), and the symbolic values `<INDENT>` / `<DEDENT>` / `<NEWLINE>`. These are reserved only within a `#?>` directive; outside the pragma section they are ordinary identifiers.
+- **String and key delimiters** — `"`, `'`, and `` ` `` open strings and quoted keys, and `\` introduces an escape inside a basic string. These are never configurable.
+- **Lexical boundaries** — `'`, `"`, `` ` ``, `#`, `@`, and `!` are active at *both* ends of a token: each opens its own token and each terminates a bare lexical run. The bare-run scan must stop at the first of these characters and must never absorb one into an identifier or number (`a@b` is not the identifier `a@b`; `a'b` is not the identifier `a'b`). Together with keyword recognition this restricts a bare value to booleans, `null`, numbers (including the special floats `inf` / `+inf` / `-inf` / `nan`), and `DATETIME`; every other bare word is a `SyntaxError` in value position.
+
+Resolving `#`, `@`, and `!` before the parameterized terminals is what makes the fixed meta-syntax independent of the configuration; a configuration that binds any of them to a structural role must be rejected (§ 7).
 
 ## 4. Parsing Strategy
 
@@ -145,7 +157,7 @@ To support configurable surface syntax:
     - `RightBrace`: default `}` (or `<DEDENT>`)
 2. **Style Presets**: The named styles BRACE (all defaults) and INDENT (`LeftBrace = <INDENT>`, `RightBrace = <DEDENT>`, `ItemSeparator = <NEWLINE>`, `KeyValueSeparator = :`) are atomic bindings applied by `SET STYLE`.
 3. **Pragma Processor**: For each `#?> SET ...` directive at the head of the file, update the configuration in order of appearance; `SET STYLE <name>` first resets the four structural parameters to the named preset. The final configuration must be validated before tokenization.
-4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with the `#` comment marker; no literal parameter value may contain `@`; `<INDENT>` / `<DEDENT>` must be bound as a pair.
+4. **Configuration Validation**: Reject conflicting configurations before parsing: literal separators must be pairwise distinct and conflict-free with the `#` comment marker; no literal parameter value may contain `@` or `!`; `<INDENT>` / `<DEDENT>` must be bound as a pair.
 5. **Dynamic Tokenization**: The lexer must use the values from the configuration object to match tokens (including multi-character literal separators), rather than hardcoded characters.
 
 ---

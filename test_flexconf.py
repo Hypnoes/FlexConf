@@ -1,3 +1,4 @@
+import math
 import sys
 sys.path.insert(0, r"D:\workspaces\GitHub.com\flex-conf")
 import flexconf
@@ -283,6 +284,66 @@ check("incomplete time part", "x: @2026-10-09T12:13\n",
 check_raises("Config conflict: '@' reserved for date/time literals",
              lambda: flexconf.Config(key_value_separator='@'),
              "Invalid configuration")
+
+# 22. Reserved meta-syntax: '@' and '!' may not appear bare outside a string
+check("@ in the middle of a bare key", "a@b: 1\n",
+      expect_error="date/time literal")
+check("@ in the middle of a bare value", "a: b@c\n",
+      expect_error="date/time literal")
+check("bare '!' in a value", "a: b!c\n", expect_error="reserved meta-syntax")
+check("bare '!' in a key", "a!b: 1\n", expect_error="reserved meta-syntax")
+check("quoted '!' is ordinary data", 'a: "b!c"\n', expected={'a': 'b!c'})
+check("quoted '@' is ordinary data", 'a: "b@c"\n', expected={'a': 'b@c'})
+check_raises("Config conflict: '!' reserved",
+             lambda: flexconf.Config(item_separator='!'),
+             "Invalid configuration")
+check_raises("Config conflict: '!' inside a separator",
+             lambda: flexconf.Config(left_brace='[!'),
+             "Invalid configuration")
+
+# 23. The pragma block must be contiguous at the very start of the document
+check("comment between pragmas is rejected",
+      "#?> SET STYLE INDENT\n# note\n#?> SET KeyValueSeparator '='\na = 1\n",
+      expect_error="contiguous block")
+check("blank line between pragmas is rejected",
+      "#?> SET STYLE INDENT\n\n#?> SET KeyValueSeparator '='\na = 1\n",
+      expect_error="contiguous block")
+check("pragma after data is rejected",
+      "a: 1\n#?> SET STYLE INDENT\n",
+      expect_error="contiguous block")
+check("pragma after the block before data is rejected",
+      "#?> SET STYLE INDENT\n# note\n#?> SET STYLE BRACE\n{\n}\n",
+      expect_error="contiguous block")
+check("leading comment before the pragma block is allowed",
+      "# note\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      expected={'a': 1, 'b': 2})
+check("blank lines before the pragma block are allowed",
+      "\n\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      expected={'a': 1, 'b': 2})
+check("blank line after the pragma block is allowed",
+      "#?> SET STYLE INDENT\n\nserver:\n  host: \"a\"\n",
+      expected={'server': {'host': 'a'}})
+
+# 24. Bare values are a closed set: special floats are numbers, and every
+#     reserved symbol terminates a bare lexical run (Lexical Boundaries)
+check("special float inf", "a: inf\n", expected={'a': float('inf')})
+check("special float +inf", "a: +inf\n", expected={'a': float('inf')})
+check("special float -inf", "a: -inf\n", expected={'a': float('-inf')})
+nan_doc = flexconf.loads("a: nan\n")
+check_true("special float nan",
+           isinstance(nan_doc['a'], float) and math.isnan(nan_doc['a']),
+           repr(nan_doc))
+nnan_doc = flexconf.loads("a: -nan\n")
+check_true("special float -nan",
+           isinstance(nnan_doc['a'], float) and math.isnan(nnan_doc['a']),
+           repr(nnan_doc))
+check("inf as a bare key", "inf: 1\n", expected={'inf': 1})
+check("Infinity is not a special float", "a: Infinity\n",
+      expect_error="Unexpected token")
+check("single quote terminates a bare run", "a'b: 1\n",
+      expect_error="Unterminated string")
+check("double quote terminates a bare run", 'a"b: 1\n',
+      expect_error="Unterminated string")
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
