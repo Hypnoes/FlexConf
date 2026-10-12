@@ -209,6 +209,26 @@ for _old in ('KeyValueSeparator', 'ItemSeparator', 'LeftBrace', 'RightBrace'):
           f"#?> SET {_old} 'x'\n{{}}\n",
           expect_error=f"Unknown pragma token '{_old}'")
 
+# 17e. Matching order: the longest match wins, and a realizer beats the bare run
+check("word realizer vs shorter bare run", '''#?> SET ITEMSEP 'and'
+{ a: 1 and b: 2 }
+''', expected={'a': 1, 'b': 2})
+check("bare run longer than the realizer still wins", '''#?> SET ITEMSEP 'and'
+{ andy: 1 }
+''', expected={'andy': 1})
+check("prefix-related realizers arbitrate by length", '''#?> SET KVSEP '::'
+#?> SET ITEMSEP ':'
+{ a::1 : b::2 }
+''', expected={'a': 1, 'b': 2})
+check("surface selection arbitrates against a longer realizer",
+      ":: 1\n",
+      config=flexconf.Config(left_brace=':', right_brace=';',
+                             key_value_separator='::'),
+      expect_error="does not start with LBRACE")
+check("date-time requires a delimiter that wins the match",
+      "{ @2026-01-0112 }", config=flexconf.Config(item_separator='1'),
+      expect_error="must introduce a well-formed date/time literal")
+
 # 18. Comments start with '#'
 check("CommentMarker pragma rejected",
       "#?> SET CommentMarker '//'\n{}\n",

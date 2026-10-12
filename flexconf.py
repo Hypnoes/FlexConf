@@ -247,7 +247,6 @@ class Lexer:
         base = config if config is not None else Config()
         self.config, self.has_pragmas, self.pragma_end = self._scan_pragmas(base)
         self.mode = self._detect_mode()
-        self._delimiter_chars = self._build_delimiter_chars()
 
     # -- Pragmas ----------------------------------------------------------
 
@@ -327,8 +326,10 @@ class Lexer:
 
         if self.config.left_brace == INDENT:
             return 'indentation'
-        if p < len(self.text) and self._starts_lbrace(p):
-            return 'bracket'
+        if p < len(self.text):
+            winner = self._winning_candidate(p)
+            if winner is not None and winner[1] == TokenType.LBRACE:
+                return 'bracket'
         if p >= len(self.text):
             return 'indentation'  # Default empty file
         if not self.has_pragmas and not self._explicit_config:
@@ -344,17 +345,45 @@ class Lexer:
 
     # -- Tokenization -------------------------------------------------------
 
-    def _starts_lbrace(self, p) -> bool:
-        # Surface selection keys on the first token, not on a raw prefix: the
-        # literal realizer of LBRACE selects the explicit surface only when it
-        # wins the match at p (Language SPEC: Matching Order).
-        lb = self.config.left_brace
-        if lb in SYMBOLIC_VALUES or not self.text.startswith(lb, p):
-            return False
-        run = 0
-        while p + run < len(self.text) and self.text[p + run] in BARE_RUN_CHARS:
-            run += 1
-        return len(lb) >= run
+    def _winning_candidate(self, p):
+        """The candidate that wins the match at p, or None.
+
+        Candidates are every literal realizer that matches at p and the bare
+        lexical run that begins there; the longest wins, and on a tie a realizer
+        beats the bare run (Language SPEC: Matching Order). Returns
+        (length, token type, value).
+        """
+        candidates = []  # (length, priority, token type, value)
+        for literal, token_type in self._literal_realizers():
+            if self.text.startswith(literal, p):
+                candidates.append((len(literal), 1, token_type, literal))
+
+        run = self._bare_run_at(p)
+        if run:
+            type_, value = self._classify_literal(run)
+            candidates.append((len(run), 0, type_, value))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: (-c[0], -c[1]))
+        length, _, token_type, value = candidates[0]
+        return length, token_type, value
+
+    def _bare_run_at(self, p) -> str:
+        # The longest run of bare-run characters starting at p.
+        q = p
+        while q < len(self.text) and self.text[q] in BARE_RUN_CHARS:
+            q += 1
+        return self.text[p:q]
+
+    def _realizer_wins_at(self, p) -> bool:
+        # True when a structural token — a realizer — wins the match at p, which
+        # is what makes p a structural delimiter for a date/time literal.
+        winner = self._winning_candidate(p)
+        return winner is not None and winner[1] in (TokenType.LBRACE,
+                                                    TokenType.RBRACE,
+                                                    TokenType.KVSEP,
+                                                    TokenType.ITEMSEP)
 
     def _literal_realizers(self):
         # The literal realizers of the effective surface, as (literal, token)
@@ -368,15 +397,6 @@ class Lexer:
                                     (cfg.item_separator, TokenType.ITEMSEP)):
             if literal not in SYMBOLIC_VALUES:
                 yield literal, token_type
-
-    def _build_delimiter_chars(self):
-        # Characters that may follow an atomic literal such as a date/time
-        # literal: whitespace, the comment marker, and the first character of
-        # every literal realizer.
-        chars = set(" \t\n\r" + COMMENT_MARKER)
-        for literal, _ in self._literal_realizers():
-            chars.add(literal[0])
-        return chars
 
     def _compute_base_indent_unit(self):
         # Base indent unit = GCD of all non-zero indentation widths
@@ -478,31 +498,13 @@ class Lexer:
             self.tokens.append(self._match_datetime())
             return True
 
-        candidates = []  # (length, priority, token type, value)
-        for literal, token_type in self._literal_realizers():
-            if self._startswith(literal):
-                candidates.append((len(literal), 1, token_type, literal))
-
-        run = self._bare_run()
-        if run:
-            type_, value = self._classify_literal(run)
-            candidates.append((len(run), 0, type_, value))
-
-        if not candidates:
+        winner = self._winning_candidate(self.pos)
+        if winner is None:
             return False
-
-        candidates.sort(key=lambda c: (-c[0], -c[1]))
-        length, _, token_type, value = candidates[0]
+        length, token_type, value = winner
         self.tokens.append(Token(token_type, value, self.line, self.col))
         self._advance(length)
         return True
-
-    def _bare_run(self) -> str:
-        # The longest run of bare-run characters at the current position.
-        p = self.pos
-        while p < len(self.text) and self.text[p] in BARE_RUN_CHARS:
-            p += 1
-        return self.text[self.pos:p]
 
     def _unexpected_char_message(self, char: str) -> str:
         # A character consumed by no token is not data (Parser SPEC 4.3).
@@ -641,12 +643,16 @@ class Lexer:
 
     def _match_datetime(self):
         """Scan a '@'-sigiled date/time literal (Language SPEC: Dates and
-        Times). The body must match the RFC 3339 profile and be followed by
-        a structural delimiter or EOF; any other '@' outside a string is a
-        SyntaxError."""
+        Times). The body must match the RFC 3339 profile and be followed by a
+        structural delimiter — a token that a realizer wins at that position —
+        or by whitespace, a comment, or EOF; any other '@' outside a string is
+        a SyntaxError."""
         m = _DATETIME_RE.match(self.text, self.pos)
-        if m and (m.end() == len(self.text)
-                  or self.text[m.end()] in self._delimiter_chars):
+        end = m.end() if m else -1
+        if m and (end == len(self.text)
+                  or self.text[end].isspace()
+                  or self.text[end] == COMMENT_MARKER
+                  or self._realizer_wins_at(end)):
             raw = m.group(0)
             try:
                 val = _parse_datetime_body(m)
