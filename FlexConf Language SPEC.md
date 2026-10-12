@@ -188,7 +188,7 @@ Any other bare word in value position is a `SyntaxError`. A bare word is a key i
 - **`#?>` is reserved, and pragmas are one contiguous block.** The pragma block is a contiguous run of `#?>` lines at the very start of the document, preceded only by whitespace, blank lines, and `#` comments. Outside a string value, a `#?>` line anywhere else — after the block, or after data has begun — is a `SyntaxError`, not a comment, so a misplaced directive is never silently ignored. Write `# ?>` when a comment is intended.
 - **Bare words are not string values.** A value must be a string, a number, a boolean, null, or a date/time; `host: localhost` is invalid — write `host: "localhost"`.
 - **A numeric-looking bare key is the literal string.** Per § Keys, `42:` yields the string key `"42"`. Implementations must preserve the source spelling of such a key; they must not normalize it through a numeric conversion.
-- **A character with no role is a `SyntaxError`.** Outside a string, a character that matches no realizer and no reserved symbol — for instance a literal `{` in a document whose `LBRACE` is an event realizer — is a `SyntaxError` (§ Style Resolution and Surface Detection). Quote the text (`"{a}"`) to keep it, or bind the character as a realizer (§ Structural Tokens and Realizers).
+- **A character with no role is a `SyntaxError`.** Outside a string, a character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — is a `SyntaxError`. A literal `{` in a document whose `LBRACE` is an event realizer is the usual case. Quote the text (`"{a}"`) to keep it, or bind the character as a realizer (§ Structural Tokens and Realizers).
 
 ### Comments
 
@@ -489,11 +489,11 @@ application:
 The effective surface of a document is resolved as follows:
 
 1. **Pragma scanning**: The lexer scans the head of the file for pragma directives (§ Pragma Directives) and applies them in order of appearance. `SET STYLE <name>` binds the four tokens atomically; subsequent single-token `SET` directives rebind individual tokens.
-2. **Surface selection**: After skipping whitespace and `#` comments, the first non-whitespace, non-comment character is examined:
-   - If `LBRACE` is a literal realizer and the text at that position starts with it, the document uses the **explicit block surface**.
+2. **Surface selection**: After skipping whitespace and `#` comments, the first token of the document decides:
+   - If that token is `LBRACE` — that is, if the literal realizer of `LBRACE` wins the match at that position (§ Lexical Boundaries) — the document uses the **explicit block surface**.
    - Otherwise the document uses the **indentation surface**, which requires `LBRACE = <INDENT>`; a document whose effective surface does not satisfy this is invalid.
    - A document with no pragma block has no declared surface; an implementation may infer one (§ Inferred Surfaces).
-3. **Immutability**: Once selected, the surface cannot change within the document. A character that no realizer binds is not data: it is a `SyntaxError` when it occurs outside a string.
+3. **Immutability**: Once selected, the surface cannot change within the document. A character consumed by no token is a `SyntaxError` outside a string (§ Validity Rules).
 
 #### Inferred Surfaces
 
@@ -549,7 +549,7 @@ Rules:
 
 The following conditions make a FlexConf document invalid:
 
-1. **Unbound structural character**: A character that no realizer binds, occurring outside a string (§ Lexical Boundaries).
+1. **Unbound structural character**: A character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — occurring outside a string (§ Lexical Boundaries).
 2. **Invalid indentation** (INDENT style):
    - Using tabs for indentation
    - Non-uniform indentation levels (not multiples of the base indent unit)

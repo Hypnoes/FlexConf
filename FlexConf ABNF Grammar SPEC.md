@@ -56,7 +56,7 @@ Bare literals with a built-in type are reserved words rather than identifiers:
 
 For a bare lexical run that is exactly `true`, `false`, or `null`, the `boolean` / `null` production takes precedence over `bare-key`, so a `key` written this way must use `quoted-key` (or a `string`) instead. This is the keyword counterpart of the rule in § Validity Constraints that a run matching both `number` and `bare-key` is a key if and only if it is followed by `kv-sep`.
 
-ABNF treats quoted-string terminals as case-insensitive by default; for FlexConf the keyword literals, the style names `BRACE` / `INDENT`, and the pragma parameter names are matched **case-sensitively** in their listed spellings. The grammar should be read as if these terminals used `%s` string notation, so `TRUE`, `True`, `indent`, and `itemseparator` do not match.
+ABNF treats quoted-string terminals as case-insensitive by default; for FlexConf the keyword literals, the style names `BRACE` / `INDENT`, and the pragma token names are matched **case-sensitively** in their listed spellings. The grammar should be read as if these terminals used `%s` string notation, so `TRUE`, `True`, `indent`, and `itemsep` do not match.
 
 ## Core Definitions
 
@@ -240,7 +240,7 @@ The following constraints are not directly expressible in ABNF but must be enfor
 
 2. **Surface Constraints**:
    - A document uses exactly one surface.
-   - A character that no realizer binds is a syntax error outside string values.
+   - A character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — is a syntax error outside string values.
    - In an explicit surface, all braces must be properly matched and nested.
 
 3. **INDENT Style (Virtual Token) Constraints**:

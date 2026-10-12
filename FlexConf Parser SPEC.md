@@ -29,7 +29,7 @@ A FlexConf implementation typically consists of three main components:
 The lexer must resolve the effective surface before processing the first data token.
 
 - **Algorithm**: After pragma scanning, skip all leading whitespace and `#` comments.
-  - If `LBRACE` is a literal realizer and the text at that position starts with it, the surface is **explicit**.
+  - If the first token at that position is `LBRACE` — its literal realizer wins the match there (§ 3.5) — the surface is **explicit**.
   - Otherwise the surface is **indentation**, which requires `LBRACE = <INDENT>` (and hence `RBRACE = <DEDENT>`). If the effective surface does not satisfy this, raise an `InvalidSurfaceError`.
   - A document with no pragma block declares no surface; the lexer may infer one under § 3.2.1.
 - **Constraint**: Once selected, the surface is immutable for the document.
@@ -111,7 +111,7 @@ A single parsing procedure handles all blocks, parameterized by the effective se
 
 ### 4.3. Unbound Characters
 
-A character that no realizer binds is not data: outside a string it must raise a `SyntaxError`. This covers, for example, a literal `{` in a document whose `LBRACE` is an event realizer. The diagnostic should state that the character can be bound as a realizer, or that the BRACE style accepts it.
+A character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — is not data: outside a string it must raise a `SyntaxError`. A literal `{` in a document whose `LBRACE` is an event realizer is the usual case. The diagnostic should state that the character can be bound as a realizer, or that the BRACE style accepts it.
 
 Line structure is significant only as far as the effective surface binds it: in the explicit surface it is insignificant unless a realizer observes it.
 

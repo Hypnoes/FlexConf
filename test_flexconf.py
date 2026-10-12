@@ -198,14 +198,25 @@ check("API style_indent(key_value_separator='=')",
       "a = 1\n", config=flexconf.Config.style_indent(key_value_separator='='),
       expected={'a': 1})
 
+# 17c. Pragma KVSEP: the renamed token is accepted end to end
+check("pragma KVSEP '='", '''#?> SET KVSEP '='
+{ a = 1 }
+''', expected={'a': 1})
+
+# 17d. The four former parameter names are no longer pragma vocabulary
+for _old in ('KeyValueSeparator', 'ItemSeparator', 'LeftBrace', 'RightBrace'):
+    check(f"former pragma name {_old} rejected",
+          f"#?> SET {_old} 'x'\n{{}}\n",
+          expect_error=f"Unknown pragma token '{_old}'")
+
 # 18. Comments start with '#'
 check("CommentMarker pragma rejected",
       "#?> SET CommentMarker '//'\n{}\n",
       expect_error="Unknown pragma token 'CommentMarker'")
 check("'//' is not a comment", "{ a: 1 // oops\n}\n",
-      expect_error="Expected COLON")
+      expect_error="Unexpected character '/'")
 
-# 19. Invalid configurations and pragmas are rejected
+# 19. Invalid surfaces and pragmas are rejected
 def check_raises(name, fn, expect_error):
     global passed, failed
     try:
@@ -220,15 +231,15 @@ def check_raises(name, fn, expect_error):
             print(f"FAIL  {name}: unexpected {type(e).__name__}: {e}")
             failed += 1
 
-check_raises("Config conflict: ITEMSEP ':' vs KVSEP ':'",
+check_raises("Surface conflict: ITEMSEP ':' vs KVSEP ':'",
              lambda: flexconf.Config(item_separator=':'),
-             "Invalid configuration")
-check_raises("Config conflict: unpaired <INDENT>",
+             "Invalid surface")
+check_raises("Surface conflict: unpaired <INDENT>",
              lambda: flexconf.Config(left_brace=flexconf.INDENT),
-             "Invalid configuration")
-check_raises("Config conflict: ITEMSEP conflicts with the comment marker",
+             "Invalid surface")
+check_raises("Surface conflict: ITEMSEP conflicts with the comment marker",
              lambda: flexconf.Config(item_separator='#'),
-             "Invalid configuration")
+             "Invalid surface")
 check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
       expect_error="Unknown style 'YAML'")
 check("indent doc rejected when pragmas declare literal braces",
@@ -281,9 +292,9 @@ check("space separator requires exactly one space",
       "x: @2026-10-09  12:13:14\n", expect_error="Expected key")
 check("incomplete time part", "x: @2026-10-09T12:13\n",
       expect_error="must introduce a well-formed date/time literal")
-check_raises("Config conflict: '@' reserved for date/time literals",
+check_raises("Surface conflict: '@' reserved for date/time literals",
              lambda: flexconf.Config(key_value_separator='@'),
-             "Invalid configuration")
+             "Invalid surface")
 
 # 22. Reserved meta-syntax: '@' and '!' may not appear bare outside a string
 check("@ in the middle of a bare key", "a@b: 1\n",
@@ -294,12 +305,12 @@ check("bare '!' in a value", "a: b!c\n", expect_error="reserved meta-syntax")
 check("bare '!' in a key", "a!b: 1\n", expect_error="reserved meta-syntax")
 check("quoted '!' is ordinary data", 'a: "b!c"\n', expected={'a': 'b!c'})
 check("quoted '@' is ordinary data", 'a: "b@c"\n', expected={'a': 'b@c'})
-check_raises("Config conflict: '!' reserved",
+check_raises("Surface conflict: '!' reserved",
              lambda: flexconf.Config(item_separator='!'),
-             "Invalid configuration")
-check_raises("Config conflict: '!' inside a separator",
+             "Invalid surface")
+check_raises("Surface conflict: '!' inside a separator",
              lambda: flexconf.Config(left_brace='[!'),
-             "Invalid configuration")
+             "Invalid surface")
 
 # 23. The pragma block must be contiguous at the very start of the document
 check("comment between pragmas is rejected",

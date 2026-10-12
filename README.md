@@ -83,16 +83,15 @@ The string and key delimiters are fixed as well: `"` and `'` open strings, `` ` 
 - **`true`/`false`/`null` cannot be bare keys.** `true: 1` fails because the word is lexed as a boolean; quote it (`"true": 1`, or a backtick-quoted key in spec terms).
 - **A numeric-looking bare key is a string key.** The spec treats the key as its literal spelling; the reference parser instead normalizes through the numeric value, so `+99:` yields `"99"`, `1_000:` yields `"1000"`, `1.50:` yields `"1.5"`, and `5e2:` yields `"500.0"`. Quote the key when the exact spelling matters.
 - **Literal realizers are constrained, but only lightly.** A literal realizer must be non-empty, contain no whitespace and no `"`, `'`, `` ` ``, `@`, or `!`, and must not equal `#` or share a prefix with it. It must not be a duplicate of another literal realizer. Overlap with bare words and prefix relations with another realizer are both legal — matching order resolves them. So `#?> SET ITEMSEP '@'` is invalid (`@` is reserved), while `#?> SET ITEMSEP 'and'` is legal: `and` is then a separator, and `andy` is still an identifier.
-- **A character bound by no realizer is an error.** In a document whose `LBRACE` is `<INDENT>`, a literal `{` outside a string is a `SyntaxError`; quote it (`"{a}"`) to keep it, or bind it as a realizer.
+- **A character consumed by no token is an error.** In a document whose `LBRACE` is `<INDENT>`, a literal `{` outside a string is a `SyntaxError`; quote it (`"{a}"`) to keep it, or bind it as a realizer. Ordinary keys and numbers are unaffected: they are consumed as bare lexical runs.
 
 ### Reference Parser Note
 
-The bundled `flexconf.py` is a demonstration, not a complete implementation, and it diverges from the specs in a few places that involve reserved words:
+The bundled `flexconf.py` is a demonstration, not a complete implementation. It implements the token model, the matching order, and the pragma vocabulary of the specification; the remaining divergences are:
 
 - It keeps the backticks of a quoted key in the key string, so prefer a double-quoted key (`"true": 1`) in its examples; the normative quoted-key form is the backtick.
 - It does not implement hex/octal/binary literals (`0x...`, `0o...`, `0b...`) or triple-quoted strings, and it does not process `\` escapes inside basic strings.
-- It resolves literal realizers by taking the first character of each as a bare-word terminator, which is only correct for realizers that begin outside the bare-word alphabet. A realizer that begins inside it — a word separator such as `and` — is rejected by this parser even though the specification admits it; the specification resolves such cases by matching order (longest match, realizer beats bare word).
-- It requires the literal realizers of a document to be prefix-free. The specification does not: prefix relations are legal and resolved by matching order.
+- It requires `ITEMSEP = <NEWLINE>` when `LBRACE = <INDENT>`. The specification admits the other mixed bindings, such as an indentation surface whose items are separated by `;`.
 - Its surface inference is the two-style heuristic of § Language Summary, not the inference rules of the Language Specification, so it accepts some documents whose readings disagree on the data and which a conforming implementation must reject.
 
 Use the specifications as the normative reference and treat the reference parser as a learning aid.
