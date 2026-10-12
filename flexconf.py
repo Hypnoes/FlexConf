@@ -1,17 +1,17 @@
 """FlexConf reference implementation.
 
 FlexConf has a single unified structural model (Language SPEC: Block
-Structure) whose surface syntax is governed by four configurable
-parameters — KeyValueSeparator, ItemSeparator, LeftBrace, RightBrace —
-plus two named style presets, BRACE (default) and INDENT. Comments are
+Structure): every document is tokenized into four structural tokens —
+LBRACE, RBRACE, KVSEP, ITEMSEP — each realized either by a literal string or
+by a line-structure event (Language SPEC: Structural Tokens and Realizers).
+Two named styles, BRACE (default) and INDENT, are predefined. Comments are
 introduced by '#'.
 
-The lexer normalizes both surfaces into one token stream: in the
-indentation surface, INDENT/DEDENT tokens are the virtual LeftBrace/
-RightBrace (<INDENT>/<DEDENT>) and NEWLINE tokens are the virtual
-ItemSeparator (<NEWLINE>). The parser is surface-agnostic.
+The lexer picks one candidate per position: the longest match wins, and on a
+tie a realizer beats the bare lexical run. The parser consumes the four tokens
+and never inspects the realizer.
 
-Pipeline: Lexer (pragma scan -> style/surface resolution -> tokenize)
+Pipeline: Lexer (pragma scan -> surface selection -> tokenize)
 -> Parser (unified block parsing) -> Interpreter (native types).
 """
 
@@ -25,11 +25,11 @@ from typing import Any
 
 # --- Configuration & Constants ---
 
-# Symbolic parameter values (Language SPEC: Syntax Parameters). These denote
-# virtual tokens generated from line-structure analysis, not literal text.
-INDENT = '<INDENT>'    # one indentation level deeper   (virtual LeftBrace)
-DEDENT = '<DEDENT>'    # one indentation level shallower (virtual RightBrace)
-NEWLINE = '<NEWLINE>'  # line ending                    (virtual ItemSeparator)
+# Event realizer spellings (Language SPEC: Structural Tokens and Realizers).
+# These denote tokens generated from line-structure analysis, not literal text.
+INDENT = '<INDENT>'    # one indentation level deeper   (virtual LBRACE)
+DEDENT = '<DEDENT>'    # one indentation level shallower (virtual RBRACE)
+NEWLINE = '<NEWLINE>'  # line ending                    (virtual ITEMSEP)
 
 SYMBOLIC_VALUES = (INDENT, DEDENT, NEWLINE)
 
@@ -51,6 +51,17 @@ RESERVED_SIGIL = '!'
 # reason used in diagnostics.
 RESERVED_IN_PARAMS = ((DATETIME_SIGIL, 'reserved for date/time literals'),
                       (RESERVED_SIGIL, 'reserved for future use'))
+
+# The character class of a bare lexical run: the characters § Keys allows for
+# bare identifiers, together with the characters the number productions may
+# consume (sign, fraction point). It is fixed and independent of the effective
+# surface (Language SPEC: Lexical Boundaries).
+BARE_RUN_CHARS = frozenset(
+    'abcdefghijklmnopqrstuvwxyz'
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    '0123456789'
+    '_-+.'
+)
 
 # RFC 3339 profile (ABNF SPEC: Date and Time Types). '@' is not part of the
 # captured body. The date-time separator may be 'T', 't', or exactly one
@@ -83,12 +94,12 @@ def _parse_datetime_body(m: re.Match):
         body += 'Z' if offset in ('Z', 'z') else offset
     return datetime.fromisoformat(body)
 
-# Pragma parameter names -> Config fields (Language SPEC: Pragma Directives)
+# Pragma token names -> Config fields (Language SPEC: Pragma Directives)
 PARAM_FIELDS = {
-    'KeyValueSeparator': 'key_value_separator',
-    'ItemSeparator': 'item_separator',
-    'LeftBrace': 'left_brace',
-    'RightBrace': 'right_brace',
+    'KVSEP': 'key_value_separator',
+    'ITEMSEP': 'item_separator',
+    'LBRACE': 'left_brace',
+    'RBRACE': 'right_brace',
 }
 
 STYLE_PRESETS = {
@@ -113,7 +124,7 @@ class Config:
     INDENT preset; both accept field overrides, e.g.
     Config.style_indent(key_value_separator='=').
 
-    Validation (Language SPEC: Syntax Parameters) runs at construction:
+    Validation (Language SPEC: Structural Tokens and Realizers) runs at construction:
     conflicting or otherwise illegal configurations raise FlexConfError
     before any parsing takes place.
     """
@@ -134,31 +145,31 @@ class Config:
 
     def __post_init__(self):
         def fail(msg):
-            raise FlexConfError(f"Invalid configuration: {msg}", 1, 1)
+            raise FlexConfError(f"Invalid surface: {msg}", 1, 1)
 
         kv, sep, lb, rb = (self.key_value_separator, self.item_separator,
                            self.left_brace, self.right_brace)
 
-        # Symbolic value placement (Language SPEC: Syntax Parameters)
+        # Symbolic value placement (Language SPEC: Structural Tokens and Realizers)
         if kv in SYMBOLIC_VALUES:
-            fail("KeyValueSeparator must be a literal string")
+            fail("KVSEP must be a literal string")
         if sep in (INDENT, DEDENT):
-            fail(f"ItemSeparator cannot be bound to '{sep}'")
+            fail(f"ITEMSEP cannot be bound to '{sep}'")
         if lb in (DEDENT, NEWLINE):
-            fail(f"LeftBrace cannot be bound to '{lb}'")
+            fail(f"LBRACE cannot be bound to '{lb}'")
         if rb in (INDENT, NEWLINE):
-            fail(f"RightBrace cannot be bound to '{rb}'")
+            fail(f"RBRACE cannot be bound to '{rb}'")
         if (lb == INDENT) != (rb == DEDENT):
             fail("<INDENT>/<DEDENT> must be bound as a pair to "
-                 "LeftBrace/RightBrace")
+                 "LBRACE/RBRACE")
 
-        # Literal separators: pairwise distinct, prefix-free, no conflicts
-        literals = {'KeyValueSeparator': kv}
+        # Literal realizers: pairwise distinct, and never the comment marker
+        literals = {'KVSEP': kv}
         if sep != NEWLINE:
-            literals['ItemSeparator'] = sep
+            literals['ITEMSEP'] = sep
         if lb != INDENT:
-            literals['LeftBrace'] = lb
-            literals['RightBrace'] = rb
+            literals['LBRACE'] = lb
+            literals['RBRACE'] = rb
 
         seen = []
         for name, v in literals.items():
@@ -173,10 +184,8 @@ class Config:
                     fail(f"{name} must not contain {sigil!r} ({why})")
             for other_name, other in seen:
                 if v == other:
-                    fail(f"{name} {v!r} conflicts with {other_name}")
-                if v.startswith(other) or other.startswith(v):
-                    fail(f"{name} {v!r} and {other_name} {other!r} must not "
-                         "be prefixes of each other")
+                    fail(f"{name} {v!r} and {other_name} {other!r} are the "
+                         "same literal realizer")
             if v.startswith(COMMENT_MARKER) or COMMENT_MARKER.startswith(v):
                 fail(f"{name} {v!r} conflicts with the comment marker "
                      f"{COMMENT_MARKER!r}")
@@ -184,10 +193,10 @@ class Config:
 
         # Reference-implementation limit (the SPEC allows this combination,
         # but blank-line separation of anonymous map items is only defined
-        # for ItemSeparator=<NEWLINE>, which this implementation requires).
+        # for ITEMSEP=<NEWLINE>, which this implementation requires).
         if lb == INDENT and sep != NEWLINE:
-            fail("this implementation requires ItemSeparator=<NEWLINE> "
-                 "when LeftBrace=<INDENT> (the INDENT style)")
+            fail("this implementation requires ITEMSEP=<NEWLINE> "
+                 "when LBRACE=<INDENT> (the INDENT style)")
 
 
 class TokenType(Enum):
@@ -199,16 +208,13 @@ class TokenType(Enum):
     DATETIME = auto()      # '@'-sigiled date/time literal
     IDENTIFIER = auto()
 
-    # Structure (unified vocabulary; the lexer normalizes both surfaces)
-    LBRACE = auto()        # literal LeftBrace
-    RBRACE = auto()        # literal RightBrace
-    COLON = auto()         # KeyValueSeparator (any literal value)
-    COMMA = auto()         # literal ItemSeparator (any literal value)
-    NEWLINE = auto()       # virtual ItemSeparator (<NEWLINE>)
-
-    # Virtual braces of the indentation surface
-    INDENT = auto()        # virtual LeftBrace  (<INDENT>)
-    DEDENT = auto()        # virtual RightBrace (<DEDENT>)
+    # Structural tokens (Language SPEC: Structural Tokens and Realizers). Each
+    # is realized by a literal string or by a line-structure event; the lexer
+    # emits the token, never the realizer.
+    LBRACE = auto()
+    RBRACE = auto()
+    KVSEP = auto()
+    ITEMSEP = auto()
 
     EOF = auto()
 
@@ -241,7 +247,6 @@ class Lexer:
         base = config if config is not None else Config()
         self.config, self.has_pragmas, self.pragma_end = self._scan_pragmas(base)
         self.mode = self._detect_mode()
-        self._literal_delims = self._build_delimiters()
 
     # -- Pragmas ----------------------------------------------------------
 
@@ -290,7 +295,7 @@ class Lexer:
         elif target in PARAM_FIELDS:
             values[PARAM_FIELDS[target]] = self._parse_pragma_value(arg, line)
         else:
-            raise FlexConfError(f"Unknown pragma parameter '{target}'", line, 1)
+            raise FlexConfError(f"Unknown pragma token '{target}'", line, 1)
 
     def _parse_pragma_value(self, arg: str, line: int):
         if arg.startswith('<') and arg.endswith('>'):
@@ -321,8 +326,10 @@ class Lexer:
 
         if self.config.left_brace == INDENT:
             return 'indentation'
-        if p < len(self.text) and self.text.startswith(self.config.left_brace, p):
-            return 'bracket'
+        if p < len(self.text):
+            winner = self._winning_candidate(p)
+            if winner is not None and winner[1] == TokenType.LBRACE:
+                return 'bracket'
         if p >= len(self.text):
             return 'indentation'  # Default empty file
         if not self.has_pragmas and not self._explicit_config:
@@ -333,26 +340,63 @@ class Lexer:
         line = self.text.count('\n', 0, p) + 1
         col = p - self.text.rfind('\n', 0, p)
         raise FlexConfError(
-            f"Document does not start with LeftBrace {self.config.left_brace!r}; "
+            f"Document does not start with LBRACE {self.config.left_brace!r}; "
             "use '#?> SET STYLE INDENT' for the indentation surface", line, col)
 
     # -- Tokenization -------------------------------------------------------
 
-    def _build_delimiters(self):
-        # Characters that terminate a bare literal: whitespace plus the first
-        # character of every literal separator and the '#' comment marker.
-        # '{'/'}' are always delimiters so they can be diagnosed as style
-        # mixing in the indentation surface. The reserved meta-syntax symbols
-        # '@' and '!', the string delimiters, and the comment marker all
-        # terminate a bare lexical run rather than being absorbed into it
-        # (Language SPEC: Lexical Boundaries — 'a@b' / "a'b" are errors,
-        # never identifiers).
-        delims = set(" \t\n\r{}#@!'\"")
-        for s in (self.config.key_value_separator, self.config.item_separator,
-                  self.config.left_brace, self.config.right_brace):
-            if s not in SYMBOLIC_VALUES:
-                delims.add(s[0])
-        return delims
+    def _winning_candidate(self, p):
+        """The candidate that wins the match at p, or None.
+
+        Candidates are every literal realizer that matches at p and the bare
+        lexical run that begins there; the longest wins, and on a tie a realizer
+        beats the bare run (Language SPEC: Matching Order). Returns
+        (length, token type, value).
+        """
+        candidates = []  # (length, priority, token type, value)
+        for literal, token_type in self._literal_realizers():
+            if self.text.startswith(literal, p):
+                candidates.append((len(literal), 1, token_type, literal))
+
+        run = self._bare_run_at(p)
+        if run:
+            type_, value = self._classify_literal(run)
+            candidates.append((len(run), 0, type_, value))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: (-c[0], -c[1]))
+        length, _, token_type, value = candidates[0]
+        return length, token_type, value
+
+    def _bare_run_at(self, p) -> str:
+        # The longest run of bare-run characters starting at p.
+        q = p
+        while q < len(self.text) and self.text[q] in BARE_RUN_CHARS:
+            q += 1
+        return self.text[p:q]
+
+    def _realizer_wins_at(self, p) -> bool:
+        # True when a structural token — a realizer — wins the match at p, which
+        # is what makes p a structural delimiter for a date/time literal.
+        winner = self._winning_candidate(p)
+        return winner is not None and winner[1] in (TokenType.LBRACE,
+                                                    TokenType.RBRACE,
+                                                    TokenType.KVSEP,
+                                                    TokenType.ITEMSEP)
+
+    def _literal_realizers(self):
+        # The literal realizers of the effective surface, as (literal, token)
+        # pairs. Symbolic realizers produce their token from line structure
+        # instead and are never matched as literal text (Language SPEC:
+        # Structural Tokens and Realizers).
+        cfg = self.config
+        for literal, token_type in ((cfg.left_brace, TokenType.LBRACE),
+                                    (cfg.right_brace, TokenType.RBRACE),
+                                    (cfg.key_value_separator, TokenType.KVSEP),
+                                    (cfg.item_separator, TokenType.ITEMSEP)):
+            if literal not in SYMBOLIC_VALUES:
+                yield literal, token_type
 
     def _compute_base_indent_unit(self):
         # Base indent unit = GCD of all non-zero indentation widths
@@ -386,16 +430,15 @@ class Lexer:
         while self.pos < len(self.text):
             char = self.text[self.pos]
 
-            # 1. Handle Whitespace / Indentation (Language SPEC: Whitespace
-            #    Handling — unbound whitespace is insignificant and skipped)
+            # 1. Line structure (Language SPEC: Whitespace Handling). A line
+            #    ending realizes ITEMSEP when the surface binds it that way, and
+            #    in the indentation surface it also feeds the block realizer.
             if char == '\n':
                 self._advance()
+                if self.config.item_separator == NEWLINE:
+                    self.tokens.append(Token(TokenType.ITEMSEP, '\n', self.line - 1, self.col))
                 if self.mode == 'indentation':
-                    self.tokens.append(Token(TokenType.NEWLINE, '\n', self.line - 1, self.col))
                     self._handle_indentation()
-                elif self.config.item_separator == NEWLINE:
-                    # Mixed binding: literal braces + <NEWLINE> separator
-                    self.tokens.append(Token(TokenType.NEWLINE, '\n', self.line - 1, self.col))
                 continue
 
             if char.isspace():
@@ -408,31 +451,26 @@ class Lexer:
                 continue
 
             # 3. Reserved meta-syntax with no production. '@' is handled by
-            #    _parse_primitive below (the date/time sigil); '!' currently
-            #    has no meaning, so it is an error outside a string.
+            #    _match_token below (the date/time sigil); '!' currently has no
+            #    meaning, so it is an error outside a string.
             if char == RESERVED_SIGIL:
                 raise FlexConfError(
                     f"{RESERVED_SIGIL!r} is reserved meta-syntax and may not "
                     "appear bare outside a string; quote it to use it as data",
                     self.line, self.col)
 
-            # 4. Handle Structure (literal separators from the configuration)
-            if self._match_structure():
+            # 4. One match wins (Language SPEC: Matching Order)
+            if self._match_token():
                 continue
 
-            # 5. Handle Primitives
-            token = self._parse_primitive()
-            if token:
-                self.tokens.append(token)
-                continue
-
-            raise FlexConfError(f"Unexpected character '{char}'", self.line, self.col)
+            raise FlexConfError(self._unexpected_char_message(char),
+                                self.line, self.col)
 
         # EOF Handling
         if self.mode == 'indentation':
             while len(self.indent_stack) > 1:
                 self.indent_stack.pop()
-                self.tokens.append(Token(TokenType.DEDENT, None, self.line, self.col))
+                self.tokens.append(Token(TokenType.RBRACE, None, self.line, self.col))
 
         self.tokens.append(Token(TokenType.EOF, None, self.line, self.col))
         return self.tokens
@@ -440,52 +478,54 @@ class Lexer:
     def _startswith(self, s: str) -> bool:
         return self.text.startswith(s, self.pos)
 
-    def _match_structure(self) -> bool:
-        """Match a literal structural token at the current position.
-        Prefix-freeness of the separators (validated in Config) makes the
-        match order irrelevant."""
-        cfg = self.config
+    def _match_token(self) -> bool:
+        """Match one token at the current position.
 
-        if self.mode == 'indentation':
-            # Style mixing guard: the BRACE style's literal braces are never
-            # valid in the indentation surface (Language SPEC: Validity).
-            if self.text[self.pos] in '{}':
-                raise FlexConfError(
-                    f"Unexpected '{self.text[self.pos]}' in indentation mode",
-                    self.line, self.col)
-            if self._startswith(cfg.key_value_separator):
-                self.tokens.append(Token(TokenType.COLON, cfg.key_value_separator,
-                                         self.line, self.col))
-                self._advance(len(cfg.key_value_separator))
-                return True
+        Every realizer that matches here and the bare lexical run that begins
+        here are candidates; the longest wins, and on a tie a realizer beats the
+        bare run (Language SPEC: Matching Order). A literal realizer is
+        therefore never matched inside a bare run, and prefix relations between
+        realizers need no special rule.
+        """
+        char = self.text[self.pos]
+
+        # Reserved symbols with atomic literals. No realizer may begin with one
+        # of these characters (Language SPEC: Literal realizers).
+        if char in ('"', "'"):
+            self.tokens.append(self._match_string())
+            return True
+        if char == DATETIME_SIGIL:
+            self.tokens.append(self._match_datetime())
+            return True
+
+        winner = self._winning_candidate(self.pos)
+        if winner is None:
             return False
+        length, token_type, value = winner
+        self.tokens.append(Token(token_type, value, self.line, self.col))
+        self._advance(length)
+        return True
 
-        for literal, token_type in ((cfg.left_brace, TokenType.LBRACE),
-                                    (cfg.right_brace, TokenType.RBRACE),
-                                    (cfg.key_value_separator, TokenType.COLON),
-                                    (cfg.item_separator, TokenType.COMMA)):
-            if literal in SYMBOLIC_VALUES:
-                continue  # virtual token: never matched as literal text
-            if self._startswith(literal):
-                self.tokens.append(Token(token_type, literal, self.line, self.col))
-                self._advance(len(literal))
-                return True
-        return False
+    def _unexpected_char_message(self, char: str) -> str:
+        # A character consumed by no token is not data (Parser SPEC 4.3).
+        message = f"Unexpected character '{char}'"
+        if char in '{}[]' and self.mode == 'indentation':
+            message += (" — no token consumes it; bind it as a literal "
+                        "realizer or use the BRACE style")
+        return message
 
     def _flush_blanks(self, n):
-        # A blank line emits a NEWLINE (virtual ItemSeparator) token
-        # (Parser SPEC 3.4)
+        # A blank line realizes an extra ITEMSEP token (Parser SPEC 3.4)
         for _ in range(n):
-            self.tokens.append(Token(TokenType.NEWLINE, '\n', self.line, 1))
+            self.tokens.append(Token(TokenType.ITEMSEP, '\n', self.line, 1))
 
     def _handle_indentation(self):
-        # Virtual brace generation (Parser SPEC 3.4): consumes whitespace/
-        # comments/newlines until a real line starts, then emits one
-        # INDENT/DEDENT (virtual LBRACE/RBRACE) per indentation level.
-        # Blank lines are buffered; when they precede a dedent, they are
-        # emitted AFTER the DEDENT tokens (together with the moved line-end
-        # NEWLINE), so a blank line stays visible at the level whose items
-        # it separates (anonymous maps, Parser SPEC 4.2).
+        # Event token generation (Parser SPEC 3.4): consumes whitespace/
+        # comments/newlines until a real line starts, then emits one LBRACE or
+        # RBRACE per indentation level. Blank lines are buffered; when they
+        # precede a dedent, they are emitted AFTER the RBRACE tokens (together
+        # with the moved line-end ITEMSEP), so a blank line stays visible at the
+        # level whose items it separates (anonymous maps, Parser SPEC 4.2).
 
         pending_blanks = 0
         while self.pos < len(self.text):
@@ -533,31 +573,31 @@ class Lexer:
                 current_level = self.indent_stack[-1]
                 if indent_len > current_level:
                     self._flush_blanks(pending_blanks)
-                    # Emit one INDENT (virtual LBRACE) per indentation level
-                    # (Parser SPEC 3.4), so the parser can detect the extra
-                    # level of anonymous map items inside lists.
+                    # One LBRACE per indentation level (Parser SPEC 3.4), so
+                    # the parser can detect the extra level of anonymous map
+                    # items inside lists.
                     base = self.base_indent_unit or indent_len
                     level = current_level + base
                     while level < indent_len:
                         self.indent_stack.append(level)
-                        self.tokens.append(Token(TokenType.INDENT, None, self.line, self.col))
+                        self.tokens.append(Token(TokenType.LBRACE, None, self.line, self.col))
                         level += base
                     self.indent_stack.append(indent_len)
-                    self.tokens.append(Token(TokenType.INDENT, None, self.line, self.col))
+                    self.tokens.append(Token(TokenType.LBRACE, None, self.line, self.col))
                 elif indent_len < current_level:
-                    # Move the preceding line-end NEWLINE past the DEDENTs so
+                    # Move the preceding line-end ITEMSEP past the RBRACEs so
                     # the enclosing level sees it (and any blank lines).
-                    moved_newline = None
-                    if self.tokens and self.tokens[-1].type == TokenType.NEWLINE:
-                        moved_newline = self.tokens.pop()
+                    moved_sep = None
+                    if self.tokens and self.tokens[-1].type == TokenType.ITEMSEP:
+                        moved_sep = self.tokens.pop()
                     while indent_len < current_level:
                         self.indent_stack.pop()
                         current_level = self.indent_stack[-1]
-                        self.tokens.append(Token(TokenType.DEDENT, None, self.line, self.col))
+                        self.tokens.append(Token(TokenType.RBRACE, None, self.line, self.col))
                     if indent_len != current_level:
                         raise FlexConfError("Unindent does not match any outer indentation level", self.line, self.col)
-                    if moved_newline is not None:
-                        self.tokens.append(moved_newline)
+                    if moved_sep is not None:
+                        self.tokens.append(moved_sep)
                     self._flush_blanks(pending_blanks)
                 else:
                     self._flush_blanks(pending_blanks)
@@ -589,54 +629,30 @@ class Lexer:
         while self.pos < len(self.text) and self.text[self.pos] != '\n':
             self._advance()
 
-    def _parse_primitive(self):
-        # Shared by both surfaces: quoted strings are read in place; bare
-        # literals run until a structural delimiter and are then classified.
-        char = self.text[self.pos]
+    def _match_string(self):
+        # Simple string parser (does not handle all escapes/multiline
+        # perfectly in this ref)
+        quote = self.text[self.pos]
+        end_quote = self.text.find(quote, self.pos + 1)
+        if end_quote == -1:
+            raise FlexConfError("Unterminated string", self.line, self.col)
+        val = self.text[self.pos + 1:end_quote]
+        token = Token(TokenType.STRING, val, self.line, self.col)
+        self._advance(end_quote - self.pos + 1)
+        return token
 
-        # Date/time literal (Language SPEC: Dates and Times). The sigil is
-        # fixed meta-syntax; the body is one atomic lexeme, so its ':'
-        # characters never interact with the KeyValueSeparator.
-        if char == DATETIME_SIGIL:
-            return self._parse_datetime()
-
-        # String
-        if char in ('"', "'"):
-            # Simple string parser (does not handle all escapes/multiline perfectly in this ref)
-            quote = char
-            end_quote = self.text.find(quote, self.pos + 1)
-            if end_quote == -1:
-                raise FlexConfError("Unterminated string", self.line, self.col)
-            val = self.text[self.pos + 1:end_quote]
-            length = end_quote - self.pos + 1
-            token = Token(TokenType.STRING, val, self.line, self.col)
-            self._advance(length)
-            return token
-
-        # Other literals
-        # Read until delimiter
-        start_pos = self.pos
-        while self.pos < len(self.text):
-            c = self.text[self.pos]
-            if c in self._literal_delims:
-                break
-            self._advance()
-
-        raw = self.text[start_pos:self.pos]
-        if not raw:
-            return None
-
-        type_, val = self._classify_literal(raw)
-        return Token(type_, val, self.line, self.col - len(raw))
-
-    def _parse_datetime(self):
+    def _match_datetime(self):
         """Scan a '@'-sigiled date/time literal (Language SPEC: Dates and
-        Times). The body must match the RFC 3339 profile and be followed by
-        a structural delimiter or EOF; any other '@' outside a string is a
-        SyntaxError."""
+        Times). The body must match the RFC 3339 profile and be followed by a
+        structural delimiter — a token that a realizer wins at that position —
+        or by whitespace, a comment, or EOF; any other '@' outside a string is
+        a SyntaxError."""
         m = _DATETIME_RE.match(self.text, self.pos)
-        if m and (m.end() == len(self.text)
-                  or self.text[m.end()] in self._literal_delims):
+        end = m.end() if m else -1
+        if m and (end == len(self.text)
+                  or self.text[end].isspace()
+                  or self.text[end] == COMMENT_MARKER
+                  or self._realizer_wins_at(end)):
             raw = m.group(0)
             try:
                 val = _parse_datetime_body(m)
@@ -737,19 +753,18 @@ class ListNode(Node):
 class Parser:
     """Surface-agnostic block parser (Parser SPEC 4).
 
-    The lexer has already normalized both surfaces into the unified token
-    vocabulary, so a single block-parsing procedure handles every style:
-    INDENT/DEDENT are the virtual braces of the indentation surface,
-    NEWLINE is the virtual ItemSeparator of ItemSeparator=<NEWLINE>.
+    The lexer emits the four structural tokens whatever realizes them
+    (Language SPEC: Structural Tokens and Realizers), so one block-parsing
+    procedure handles every surface. Only the anonymous-map-of-maps rule needs
+    to know whether the block realizer is an event: an event realizer wraps the
+    map level, while a literal one opens each item with its own LBRACE.
     """
 
     def __init__(self, tokens: list[Token], config: Config):
         self.tokens = tokens
         self.pos = 0
-        # Token type that separates items (Parser SPEC 3.3): COMMA carries
-        # any literal ItemSeparator, NEWLINE carries <NEWLINE>.
-        self.item_sep = (TokenType.NEWLINE if config.item_separator == NEWLINE
-                         else TokenType.COMMA)
+        self.item_sep = TokenType.ITEMSEP
+        self.event_braces = config.left_brace == INDENT
 
     def peek(self, offset=0) -> Token:
         if self.pos + offset < len(self.tokens):
@@ -775,10 +790,13 @@ class Parser:
     def _parse_block(self, start_token, end_token, separator_token):
         start = self.consume(start_token)
 
-        # Two consecutive LBRACEs (virtual or literal): the block skipped
-        # the list level, so it is an anonymous map whose Map items sit one
-        # level deeper (Parser SPEC 4.2).
-        if start_token == TokenType.INDENT and self.peek().type == TokenType.INDENT:
+        # Two consecutive LBRACEs open an anonymous map whose map items sit one
+        # level deeper (Parser SPEC 4.2). An event block realizer wraps the
+        # whole list, so it needs the dedicated routine; with a literal realizer
+        # each item carries its own LBRACE and the generic item parser already
+        # handles the nesting.
+        if (start_token == TokenType.LBRACE and self.event_braces
+                and self.peek().type == TokenType.LBRACE):
             self.consume()
             return self._parse_list_block(start.line, start.col)
 
@@ -800,39 +818,39 @@ class Parser:
         # Anonymous map items at the deeper level
         while True:
             self._skip_separators()
-            if self.peek().type in (TokenType.DEDENT, TokenType.EOF):
+            if self.peek().type in (TokenType.RBRACE, TokenType.EOF):
                 break
             elements.append(self._parse_anonymous_map())
 
-        self.consume(TokenType.DEDENT)  # map level -> list level
+        self.consume(TokenType.RBRACE)  # map level -> list level
 
         # Scalar items at the list level
-        while self.peek().type not in (TokenType.DEDENT, TokenType.EOF):
-            if self.peek().type == TokenType.NEWLINE:
+        while self.peek().type not in (TokenType.RBRACE, TokenType.EOF):
+            if self.peek().type == TokenType.ITEMSEP:
                 self.consume()
                 continue
             elements.append(self._parse_value())
 
-        self.consume(TokenType.DEDENT)  # list level -> enclosing level
+        self.consume(TokenType.RBRACE)  # list level -> enclosing level
         return ListNode(elements, line, col)
 
     def _parse_anonymous_map(self):
         # Anonymous map inside a list: key-value pairs at the same level,
-        # ended by a blank line (two consecutive NEWLINEs) or by DEDENT.
+        # ended by a blank line (two consecutive ITEMSEPs) or by RBRACE.
         start = self.peek()
         res = {}
         while True:
             t = self.peek()
-            if t.type in (TokenType.DEDENT, TokenType.EOF):
+            if t.type in (TokenType.RBRACE, TokenType.EOF):
                 break
-            if t.type == TokenType.NEWLINE:
-                if self.peek(1).type in (TokenType.NEWLINE, TokenType.DEDENT, TokenType.EOF):
+            if t.type == TokenType.ITEMSEP:
+                if self.peek(1).type in (TokenType.ITEMSEP, TokenType.RBRACE, TokenType.EOF):
                     break  # blank line ends this map item
                 self.consume()
                 continue
             key_token = self.peek()
             key = self._parse_key()
-            self.consume(TokenType.COLON)
+            self.consume(TokenType.KVSEP)
             val = self._parse_value()
             if key in res:
                 raise FlexConfError(f"Duplicate key '{key}'", key_token.line, key_token.col)
@@ -840,7 +858,7 @@ class Parser:
         return MapNode(res, start.line, start.col)
 
     def _skip_separators(self):
-        while self.peek().type == TokenType.NEWLINE:
+        while self.peek().type == TokenType.ITEMSEP:
             self.consume()
 
     def _parse_items(self, end_token, separator_token):
@@ -868,7 +886,7 @@ class Parser:
 
             key_token = self.peek()
             key = self._parse_key()
-            self.consume(TokenType.COLON)
+            self.consume(TokenType.KVSEP)
             val = self._parse_value()
             if key in res:
                 raise FlexConfError(f"Duplicate key '{key}'", key_token.line, key_token.col)
@@ -877,7 +895,7 @@ class Parser:
             if self.peek().type == separator_token:
                 self.consume()
             elif self.peek().type != end_token:
-                # The Language SPEC requires an ItemSeparator between items;
+                # The Language SPEC requires an ITEMSEP between items;
                 # the reference parser is lenient here and lets the next
                 # loop iteration continue the parse.
                 pass
@@ -907,18 +925,16 @@ class Parser:
     def _parse_value(self):
         t = self.peek()
 
-        # Explicit block (literal braces)
+        # A block: an LBRACE, whether literal or produced by the realizer
         if t.type == TokenType.LBRACE:
             return self._parse_block(TokenType.LBRACE, TokenType.RBRACE, self.item_sep)
 
-        # Indentation-surface block (virtual braces)
-        if t.type == TokenType.NEWLINE:
+        # ... or, in the indentation surface, the line ending that realizes
+        # ITEMSEP immediately before the block's LBRACE.
+        if t.type == TokenType.ITEMSEP and self.event_braces:
             self.consume()
             self._skip_separators()  # tolerate blank lines between key and block
-            return self._parse_block(TokenType.INDENT, TokenType.DEDENT, TokenType.NEWLINE)
-
-        if t.type == TokenType.INDENT:
-            return self._parse_block(TokenType.INDENT, TokenType.DEDENT, TokenType.NEWLINE)
+            return self._parse_block(TokenType.LBRACE, TokenType.RBRACE, self.item_sep)
 
         # Primitives
         if t.type in (TokenType.STRING, TokenType.NUMBER, TokenType.BOOLEAN,
@@ -933,7 +949,7 @@ class Parser:
         # (Language SPEC: bare keys may start with digits, e.g. `0: value`)
         t1 = self.peek(0)
         t2 = self.peek(1)
-        if t1.type in (TokenType.IDENTIFIER, TokenType.STRING, TokenType.NUMBER) and t2.type == TokenType.COLON:
+        if t1.type in (TokenType.IDENTIFIER, TokenType.STRING, TokenType.NUMBER) and t2.type == TokenType.KVSEP:
             return True
         return False
 
@@ -1028,7 +1044,7 @@ list_example:
 
         # Test pragma-driven customization
         custom_code = """
-#?> SET ItemSeparator ';'
+#?> SET ITEMSEP ';'
 {
     server: {
         host: "localhost";  # semicolons and # comments

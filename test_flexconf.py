@@ -170,9 +170,9 @@ server:
   port: 8080
 ''', expected={'server': {'host': 'localhost', 'port': 8080}})
 
-# 15. Custom ItemSeparator ';' in the BRACE style, with free multi-line
+# 15. Custom ITEMSEP ';' in the BRACE style, with free multi-line
 #     layout (whitespace is insignificant unless bound, Language SPEC)
-check("pragma ItemSeparator ';'", '''#?> SET ItemSeparator ';'
+check("pragma ITEMSEP ';'", '''#?> SET ITEMSEP ';'
 {
   a: 1;
   b: {
@@ -182,13 +182,13 @@ check("pragma ItemSeparator ';'", '''#?> SET ItemSeparator ';'
 }
 ''', expected={'a': 1, 'b': {'x': True, 'y': 2}})
 
-# 16. Custom LeftBrace/RightBrace '[' ']' + surface detection on '['
-check("pragma LeftBrace '[' RightBrace ']'", '''#?> SET LeftBrace '['
-#?> SET RightBrace ']'
+# 16. Custom LBRACE/RBRACE '[' ']' + surface selection on '['
+check("pragma LBRACE '[' RBRACE ']'", '''#?> SET LBRACE '['
+#?> SET RBRACE ']'
 [ a: 1, b: [ 1, 2 ] ]
 ''', expected={'a': 1, 'b': [1, 2]})
 
-# 17. API-level config: KeyValueSeparator '=' in the explicit surface
+# 17. API-level config: KVSEP '=' in the explicit surface
 check("API Config(key_value_separator='=')",
       "{a = 1}", config=flexconf.Config(key_value_separator='='),
       expected={'a': 1})
@@ -198,14 +198,45 @@ check("API style_indent(key_value_separator='=')",
       "a = 1\n", config=flexconf.Config.style_indent(key_value_separator='='),
       expected={'a': 1})
 
+# 17c. Pragma KVSEP: the renamed token is accepted end to end
+check("pragma KVSEP '='", '''#?> SET KVSEP '='
+{ a = 1 }
+''', expected={'a': 1})
+
+# 17d. The four former parameter names are no longer pragma vocabulary
+for _old in ('KeyValueSeparator', 'ItemSeparator', 'LeftBrace', 'RightBrace'):
+    check(f"former pragma name {_old} rejected",
+          f"#?> SET {_old} 'x'\n{{}}\n",
+          expect_error=f"Unknown pragma token '{_old}'")
+
+# 17e. Matching order: the longest match wins, and a realizer beats the bare run
+check("word realizer vs shorter bare run", '''#?> SET ITEMSEP 'and'
+{ a: 1 and b: 2 }
+''', expected={'a': 1, 'b': 2})
+check("bare run longer than the realizer still wins", '''#?> SET ITEMSEP 'and'
+{ andy: 1 }
+''', expected={'andy': 1})
+check("prefix-related realizers arbitrate by length", '''#?> SET KVSEP '::'
+#?> SET ITEMSEP ':'
+{ a::1 : b::2 }
+''', expected={'a': 1, 'b': 2})
+check("surface selection arbitrates against a longer realizer",
+      ":: 1\n",
+      config=flexconf.Config(left_brace=':', right_brace=';',
+                             key_value_separator='::'),
+      expect_error="does not start with LBRACE")
+check("date-time requires a delimiter that wins the match",
+      "{ @2026-01-0112 }", config=flexconf.Config(item_separator='1'),
+      expect_error="must introduce a well-formed date/time literal")
+
 # 18. Comments start with '#'
 check("CommentMarker pragma rejected",
       "#?> SET CommentMarker '//'\n{}\n",
-      expect_error="Unknown pragma parameter 'CommentMarker'")
+      expect_error="Unknown pragma token 'CommentMarker'")
 check("'//' is not a comment", "{ a: 1 // oops\n}\n",
-      expect_error="Expected COLON")
+      expect_error="Unexpected character '/'")
 
-# 19. Invalid configurations and pragmas are rejected
+# 19. Invalid surfaces and pragmas are rejected
 def check_raises(name, fn, expect_error):
     global passed, failed
     try:
@@ -220,19 +251,19 @@ def check_raises(name, fn, expect_error):
             print(f"FAIL  {name}: unexpected {type(e).__name__}: {e}")
             failed += 1
 
-check_raises("Config conflict: ItemSeparator ':' vs KeyValueSeparator ':'",
+check_raises("Surface conflict: ITEMSEP ':' vs KVSEP ':'",
              lambda: flexconf.Config(item_separator=':'),
-             "Invalid configuration")
-check_raises("Config conflict: unpaired <INDENT>",
+             "Invalid surface")
+check_raises("Surface conflict: unpaired <INDENT>",
              lambda: flexconf.Config(left_brace=flexconf.INDENT),
-             "Invalid configuration")
-check_raises("Config conflict: ItemSeparator conflicts with the comment marker",
+             "Invalid surface")
+check_raises("Surface conflict: ITEMSEP conflicts with the comment marker",
              lambda: flexconf.Config(item_separator='#'),
-             "Invalid configuration")
+             "Invalid surface")
 check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
       expect_error="Unknown style 'YAML'")
 check("indent doc rejected when pragmas declare literal braces",
-      "#?> SET ItemSeparator ';'\nserver:\n  a: 1\n",
+      "#?> SET ITEMSEP ';'\nserver:\n  a: 1\n",
       expect_error="SET STYLE INDENT")
 
 # 20. Date/time literals: '@' sigil, RFC 3339 profile (Language SPEC:
@@ -281,9 +312,9 @@ check("space separator requires exactly one space",
       "x: @2026-10-09  12:13:14\n", expect_error="Expected key")
 check("incomplete time part", "x: @2026-10-09T12:13\n",
       expect_error="must introduce a well-formed date/time literal")
-check_raises("Config conflict: '@' reserved for date/time literals",
+check_raises("Surface conflict: '@' reserved for date/time literals",
              lambda: flexconf.Config(key_value_separator='@'),
-             "Invalid configuration")
+             "Invalid surface")
 
 # 22. Reserved meta-syntax: '@' and '!' may not appear bare outside a string
 check("@ in the middle of a bare key", "a@b: 1\n",
@@ -294,19 +325,19 @@ check("bare '!' in a value", "a: b!c\n", expect_error="reserved meta-syntax")
 check("bare '!' in a key", "a!b: 1\n", expect_error="reserved meta-syntax")
 check("quoted '!' is ordinary data", 'a: "b!c"\n', expected={'a': 'b!c'})
 check("quoted '@' is ordinary data", 'a: "b@c"\n', expected={'a': 'b@c'})
-check_raises("Config conflict: '!' reserved",
+check_raises("Surface conflict: '!' reserved",
              lambda: flexconf.Config(item_separator='!'),
-             "Invalid configuration")
-check_raises("Config conflict: '!' inside a separator",
+             "Invalid surface")
+check_raises("Surface conflict: '!' inside a separator",
              lambda: flexconf.Config(left_brace='[!'),
-             "Invalid configuration")
+             "Invalid surface")
 
 # 23. The pragma block must be contiguous at the very start of the document
 check("comment between pragmas is rejected",
-      "#?> SET STYLE INDENT\n# note\n#?> SET KeyValueSeparator '='\na = 1\n",
+      "#?> SET STYLE INDENT\n# note\n#?> SET KVSEP '='\na = 1\n",
       expect_error="contiguous block")
 check("blank line between pragmas is rejected",
-      "#?> SET STYLE INDENT\n\n#?> SET KeyValueSeparator '='\na = 1\n",
+      "#?> SET STYLE INDENT\n\n#?> SET KVSEP '='\na = 1\n",
       expect_error="contiguous block")
 check("pragma after data is rejected",
       "a: 1\n#?> SET STYLE INDENT\n",
@@ -315,10 +346,10 @@ check("pragma after the block before data is rejected",
       "#?> SET STYLE INDENT\n# note\n#?> SET STYLE BRACE\n{\n}\n",
       expect_error="contiguous block")
 check("leading comment before the pragma block is allowed",
-      "# note\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      "# note\n#?> SET ITEMSEP ';'\n{ a: 1; b: 2 }\n",
       expected={'a': 1, 'b': 2})
 check("blank lines before the pragma block are allowed",
-      "\n\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      "\n\n#?> SET ITEMSEP ';'\n{ a: 1; b: 2 }\n",
       expected={'a': 1, 'b': 2})
 check("blank line after the pragma block is allowed",
       "#?> SET STYLE INDENT\n\nserver:\n  host: \"a\"\n",

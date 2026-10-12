@@ -1,16 +1,16 @@
 # FlexConf 1.0 Specification
 
 *Version 0.0.3-snapshot*
-*Published on November 24, 2025; revised on October 8, 2026*
+*Published on November 24, 2025; revised on October 12, 2026*
 
 ## Overview
 
-FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf is defined by a **single unified structural model**: every document is a hierarchy of *blocks* of items, and the concrete surface syntax of a document is governed by four configurable **syntax parameters** (§ Syntax Parameters). Two canonical parameter configurations, called **styles**, are predefined:
+FlexConf is a configuration file format designed for simplicity and flexibility. FlexConf is defined by a **single unified structural model**: every document is a hierarchy of *blocks* of items, and the concrete surface syntax of a document is governed by four **structural tokens** whose form is configurable (§ Structural Tokens and Realizers). Two canonical surfaces, called **styles**, are predefined:
 
 - the **BRACE** style (braces and commas, JSON-like), and
 - the **INDENT** style (significant indentation and newlines, YAML-like).
 
-Both styles express exactly the same data model, and documents may redefine individual parameters through pragma directives (§ Pragma Directives). A document uses exactly one surface style throughout.
+Both styles express exactly the same data model, and documents may rebind individual tokens through pragma directives (§ Pragma Directives). A document uses exactly one surface throughout.
 
 ## Objectives
 
@@ -26,45 +26,100 @@ FlexConf aims to be:
 ### File Requirements
 
 - FlexConf files must be valid UTF-8 encoded Unicode documents.
-- A FlexConf document uses exactly one surface style (see § Style Resolution and Surface Detection).
+- A FlexConf document uses exactly one surface (see § Style Resolution and Surface Detection).
 
-### Syntax Parameters
+### Structural Tokens and Realizers
 
-The surface syntax of a FlexConf document is determined by four parameters:
+Every FlexConf document is tokenized into a fixed vocabulary of four **structural tokens**:
 
-| Parameter | Default | Legal values | Meaning |
-| --- | --- | --- | --- |
-| `KeyValueSeparator` | `:` | literal string | Separates a key from its value |
-| `ItemSeparator` | `,` | literal string or `<NEWLINE>` | Separates adjacent items within a block |
-| `LeftBrace` | `{` | literal string or `<INDENT>` | Opens a block |
-| `RightBrace` | `}` | literal string or `<DEDENT>` | Closes a block |
+| Token | Role |
+| --- | --- |
+| `LBRACE` | Opens a block |
+| `RBRACE` | Closes a block |
+| `KVSEP` | Separates a key from its value |
+| `ITEMSEP` | Separates adjacent items of a block |
 
-Comments are introduced by `#` (see § Comments).
+What differs between documents is not the vocabulary but the **realizer** assigned to each token: the form in which the token reaches the text.
 
-**Literal values** are quoted strings of one or more characters.
+```text
+Realizer = Literal(text)            ; a written string, matched literally
+         | Event(Indent, Increase)  ; an indentation level is entered
+         | Event(Indent, Decrease)  ; an indentation level is left
+         | Event(Line)              ; a line ending
 
-**Symbolic values** denote virtual tokens produced by line-structure analysis rather than literal characters:
+Surface  = { LBRACE: Realizer, RBRACE: Realizer, KVSEP: Realizer, ITEMSEP: Realizer }
+```
 
-- `<INDENT>`: an increase of one indentation level (conceptually the `<tab>` of the line-oriented surface)
-- `<DEDENT>`: a decrease of one indentation level (conceptually the `<bs>`)
-- `<NEWLINE>`: a line ending
+In pragma directives the first component is the token name and the second is either a quoted string or one of three event spellings: `<INDENT>` is `Event(Indent, Increase)`, `<DEDENT>` is `Event(Indent, Decrease)`, and `<NEWLINE>` is `Event(Line)` (§ Pragma Directives). Comments are introduced by `#`; the comment marker is not a structural token.
 
-A configuration is **valid** only if:
+Two restrictions follow from the roles themselves, not from any additional rule:
 
-1. The literal values of `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, and `RightBrace` are pairwise distinct, non-empty, and contain no whitespace, no string quote characters, and none of the reserved meta-syntax symbols `@` and `!` (§ Reserved Words and Symbols).
-2. No literal separator is a prefix of the comment marker `#`, and `#` is not a prefix of any literal separator.
-3. `<INDENT>` and `<DEDENT>` are bound as a pair: `LeftBrace = <INDENT>` if and only if `RightBrace = <DEDENT>`.
-4. `KeyValueSeparator` is always literal.
+- `KVSEP` is always a `Literal`: no layout event separates a key from its value.
+- `Event(Indent, Increase)` realizes `LBRACE` only, `Event(Indent, Decrease)` realizes `RBRACE` only, and `Event(Line)` realizes `ITEMSEP` only. The two `Indent` directions are one mechanism and are always bound together.
 
-An invalid configuration raises an *Invalid Configuration Error* before any parsing takes place.
+#### Literal realizers
+
+A literal realizer is a string that:
+
+1. is non-empty, and contains no whitespace, no string quote character (`"`, `'`, `` ` ``), and none of the reserved meta-syntax symbols `@` and `!` (§ Reserved Words and Symbols);
+2. is neither a prefix of the comment marker `#` nor prefixed by it;
+3. is pairwise distinct from every other literal realizer of the document.
+
+Nothing further is required of it. A literal realizer may overlap the characters that occur inside a bare lexical run, and two literal realizers may stand in a prefix relation with each other; both situations are resolved by the order in which candidates are matched (§ Lexical Boundaries).
+
+#### Event realizers
+
+| Realizer | Produced when |
+| --- | --- |
+| `Event(Indent, Increase)` | a line is more indented than the line that opened the current block |
+| `Event(Indent, Decrease)` | a line is less indented than the current block |
+| `Event(Line)` | a line ends |
+
+Three obligations attach to them:
+
+- **Significance.** Line endings are significant exactly when a realizer observes them, and leading whitespace is significant exactly when `LBRACE` and `RBRACE` are realized by `Event(Indent, …)`. All other whitespace between tokens is insignificant.
+- **Derivation.** An event token exists only where the document exhibits the corresponding geometry. A construct that produces no geometry produces no token, so an empty block has no representation when `LBRACE` and `RBRACE` are realized by `Event(Indent, …)` (§ Conversions).
+- **Repetition.** Two consecutive `Event(Line)` items are structural: they end the current item of an anonymous map (§ Anonymous Maps). A literal `ITEMSEP` carries no repeated-token meaning.
+
+#### Styles
+
+A **style** is a named surface. Two styles are predefined.
+
+BRACE (default):
+
+```text
+LBRACE  = Literal("{")
+RBRACE  = Literal("}")
+KVSEP   = Literal(":")
+ITEMSEP = Literal(",")
+```
+
+INDENT (`SET STYLE INDENT`):
+
+```text
+LBRACE  = Event(Indent, Increase)
+RBRACE  = Event(Indent, Decrease)
+KVSEP   = Literal(":")
+ITEMSEP = Event(Line)
+```
+
+Under INDENT, additionally: only spaces are used for indentation; tabs are not permitted; the base indent unit is the greatest common divisor of all non-zero indentation widths, and every width is a multiple of it; each level change produces exactly one `Event(Indent, …)` token, so a jump of two levels yields two consecutive `LBRACE` tokens (§ Anonymous Maps).
+
+Pragma directives may rebind individual tokens on top of a style (§ Pragma Directives). Any assignment satisfying the restrictions above is a legal surface, including one that mixes a literal block realizer with an event item realizer.
+
+#### Occupied lexemes
+
+A lexeme form occupied by the surface — a bound literal realizer, or one of the built-in literal keywords `true`, `false`, `null` — is no longer available as a bare key or bare value; quote it to use it as data (`` `and` ``, `"true"`). When a bound literal realizer coincides with a built-in literal form (`true`, `1`), that built-in form is shadowed in the document and must be quoted.
+
+A surface that violates any restriction above raises an *Invalid Surface Error* before any parsing takes place.
 
 ### Reserved Words and Symbols
 
-Beyond the four configurable syntax parameters, FlexConf reserves a fixed vocabulary of words and symbols. Whether an entry is reserved depends on **where** it appears, so the lists below are grouped by context rather than by spelling.
+Beyond the four structural tokens, FlexConf reserves a fixed vocabulary of words and symbols. Whether an entry is reserved depends on **where** it appears, so the lists below are grouped by context rather than by spelling.
 
 #### Fixed meta-syntax
 
-These symbols are independent of the syntax parameters and can never be re-bound or shadowed by a custom separator. A literal syntax-parameter value must not contain `@` or `!`; the `#` prefix rule applies in addition (§ Syntax Parameters):
+These symbols are independent of the surface and can never be re-bound or shadowed by a literal realizer. A literal realizer must not contain `@` or `!`, and the `#` prefix rule applies in addition (§ Structural Tokens and Realizers):
 
 | Symbol | Role | Defined in |
 | --- | --- | --- |
@@ -82,8 +137,8 @@ The words below are reserved **only on a line that begins with `#?>`**. Anywhere
 | `SET` | first word after `#?>` | Introduces a directive. |
 | `STYLE` | after `SET` | Selects a named style preset. |
 | `BRACE`, `INDENT` | after `STYLE` | Style names; case-sensitive. |
-| `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace` | after `SET` | Syntax-parameter names; case-sensitive. |
-| `<INDENT>`, `<DEDENT>`, `<NEWLINE>` | value position | Symbolic values naming virtual tokens. |
+| `KVSEP`, `ITEMSEP`, `LBRACE`, `RBRACE` | after `SET` | Token names; case-sensitive. |
+| `<INDENT>`, `<DEDENT>`, `<NEWLINE>` | value position | Event-realizer spellings. |
 
 #### Literal keywords
 
@@ -95,17 +150,26 @@ These bare words carry a built-in type and are matched case-sensitively in their
 | `null` | Null |
 | `inf`, `+inf`, `-inf`, `nan` | Special floats |
 
-A bare word that is exactly `true`, `false`, or `null` is lexed as that keyword **in every position**, including before a `KeyValueSeparator`. Such a word therefore cannot be used as a bare key; write it as a quoted key (§ Keys) to use it as one. The special floats are recognized only in value position.
+A bare word that is exactly `true`, `false`, or `null` is lexed as that keyword **in every position**, including before a `KVSEP`. Such a word therefore cannot be used as a bare key; write it as a quoted key (§ Keys) to use it as one. The special floats are recognized only in value position.
 
 #### Delimiters with fixed roles
 
-The characters `"`, `'`, and `` ` `` delimit strings and quoted keys, and `\` introduces an escape inside a basic (double-quoted) string. These roles are not configurable, and a literal syntax-parameter value must not contain `"`, `'`, or `` ` `` (§ Syntax Parameters). The structural characters `:`, `,`, `{`, and `}` are reserved only while the effective configuration binds them to a role.
+The characters `"`, `'`, and `` ` `` delimit strings and quoted keys, and `\` introduces an escape inside a basic (double-quoted) string. These roles are not configurable, and a literal realizer must not contain `"`, `'`, or `` ` `` (§ Structural Tokens and Realizers). The structural characters `:`, `,`, `{`, and `}` are reserved only while a realizer binds them to a token.
 
 #### Lexical Boundaries
 
 The reserved symbols above are lexically active at **both** ends of a token. Each of them can *open* a token — `'` and `"` open strings, `` ` `` opens a quoted key, `#` opens a comment (and `#?>` a pragma), `@` opens a date/time — and each of them **terminates a bare lexical run**: a bare identifier or numeric candidate stops at the first reserved symbol and never contains one.
 
-A bare lexical run may therefore contain only the characters that § Keys allows for bare identifiers, together with the number grammar's characters (sign, fraction point, exponent marker, digit separators, and the `0x`/`0o`/`0b` radix prefixes). In particular `a'b`, `a"b`, `` a`b ``, `a#b`, `a@b`, and `a!b` are all invalid: the reserved symbol ends the run and then takes its own role (a quote opens a string, `#` starts a comment, `@` must introduce a well-formed date/time, `!` is a `SyntaxError`). Quote the text (`"a@b"`) to keep it as data.
+A bare lexical run may therefore contain only the characters that § Keys allows for bare identifiers, together with the number grammar's characters (sign, fraction point, exponent marker, digit separators, and the `0x`/`0o`/`0b` radix prefixes). That character set is fixed: it does not depend on the effective surface. In particular `a'b`, `a"b`, `` a`b ``, `a#b`, `a@b`, and `a!b` are all invalid: the reserved symbol ends the run and then takes its own role (a quote opens a string, `#` starts a comment, `@` must introduce a well-formed date/time, `!` is a `SyntaxError`). Quote the text (`"a@b"`) to keep it as data.
+
+**Matching order.** Tokenization resolves each position in four steps:
+
+1. Every realizer that matches at the position is a candidate, as is the bare lexical run that begins there; reserved symbols take part in the same step with their fixed roles.
+2. The **longest** candidate wins.
+3. On a tie, a realizer wins over the bare run. Two realizers cannot tie, because the literal realizers of a document are pairwise distinct.
+4. A winning bare run is then classified as a keyword, a number, or a bare identifier (§ Keys, § Values).
+
+A literal realizer is therefore never matched inside a bare run — the run is longer there — while a realizer whose characters also occur inside bare runs still matches wherever a token boundary allows it. No rule separating the two character sets, and no rule forbidding a realizer to be a prefix of another, is needed.
 
 This makes bare values a **closed set**. Outside a string, a bare value can only be:
 
@@ -114,7 +178,7 @@ This makes bare values a **closed set**. Outside a string, a bare value can only
 - a Number — an integer or float, including the special floats `inf`, `+inf`, `-inf`, `nan`
 - a date/time literal introduced by `@`
 
-Any other bare word in value position is a `SyntaxError`. A bare word is a key if and only if it is followed by a `KeyValueSeparator` (§ Keys); strings, which have no bare form, must always be quoted.
+Any other bare word in value position is a `SyntaxError`. A bare word is a key if and only if it is followed by a `KVSEP` (§ Keys); strings, which have no bare form, must always be quoted.
 
 #### Usage Notes
 
@@ -124,49 +188,14 @@ Any other bare word in value position is a `SyntaxError`. A bare word is a key i
 - **`#?>` is reserved, and pragmas are one contiguous block.** The pragma block is a contiguous run of `#?>` lines at the very start of the document, preceded only by whitespace, blank lines, and `#` comments. Outside a string value, a `#?>` line anywhere else — after the block, or after data has begun — is a `SyntaxError`, not a comment, so a misplaced directive is never silently ignored. Write `# ?>` when a comment is intended.
 - **Bare words are not string values.** A value must be a string, a number, a boolean, null, or a date/time; `host: localhost` is invalid — write `host: "localhost"`.
 - **A numeric-looking bare key is the literal string.** Per § Keys, `42:` yields the string key `"42"`. Implementations must preserve the source spelling of such a key; they must not normalize it through a numeric conversion.
-- **In the indentation surface, `{` and `}` are not data.** Encountering a literal brace outside a string is a `SyntaxError` (§ Style Resolution and Surface Detection); quote the text (`"{a}"`) to keep it.
-
-### Styles
-
-A **style** is a named preset of the syntax parameters.
-
-#### BRACE (default style)
-
-```text
-KeyValueSeparator = ':'
-ItemSeparator     = ','
-LeftBrace         = '{'
-RightBrace        = '}'
-```
-
-All whitespace (spaces, tabs, newlines) is insignificant between tokens in this style (see § Whitespace Handling).
-
-#### INDENT
-
-`SET STYLE INDENT` is exactly equivalent to the following bindings:
-
-```text
-LeftBrace         = <INDENT>
-RightBrace        = <DEDENT>
-ItemSeparator     = <NEWLINE>
-KeyValueSeparator = ':'
-```
-
-The INDENT style adds the following rules, which are part of its virtual-token generation:
-
-- Only spaces are used for indentation; tabs are not permitted.
-- The base indent unit is the greatest common divisor of all non-zero indentation levels in the document; every indentation width must be a multiple of it.
-- Each indentation level generates exactly one `<INDENT>` / `<DEDENT>` virtual token, so a jump of two levels produces two consecutive `LeftBrace` tokens (see § Anonymous Maps).
-- A blank line produces an extra `ItemSeparator` token; exactly one blank line separates adjacent anonymous map items (see § Anonymous Maps).
-
-Individual parameters may be overridden on top of a style (e.g. `SET STYLE INDENT` followed by `SET KeyValueSeparator '='`). Such mixed bindings are legal as long as the final configuration satisfies the validity constraints above, but are unconventional.
+- **A character with no role is a `SyntaxError`.** Outside a string, a character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — is a `SyntaxError`. A literal `{` in a document whose `LBRACE` is an event realizer is the usual case. Quote the text (`"{a}"`) to keep it, or bind the character as a realizer (§ Structural Tokens and Realizers).
 
 ### Comments
 
 - Comments begin with `#` and continue to the end of the line.
 - Comments may appear on their own line or after values on the same line.
 - Comments are ignored by parsers; a comment-only line produces no tokens.
-- The pragma prefix `#?>` is fixed meta-syntax, recognized before the configuration takes effect (see § Pragma Directives).
+- The pragma prefix `#?>` is fixed meta-syntax, recognized before the surface takes effect (see § Pragma Directives).
 
 ```flexconf
 # This is a full-line comment
@@ -300,7 +329,7 @@ time2: @07:32:00.5                  # local time with fractional seconds
 
 Rules:
 
-- The `@` sigil is **fixed meta-syntax**, like the pragma prefix `#?>`: it never changes with the syntax parameters, and `@` must not appear in any literal syntax-parameter value (§ Syntax Parameters).
+- The `@` sigil is **fixed meta-syntax**, like the pragma prefix `#?>`: it never changes with the effective surface, and `@` must not appear in any literal realizer (§ Structural Tokens and Realizers).
 - The date and time parts of a date-time are separated by `T`, `t`, or exactly one space character. The space form exists for readability (RFC 3339 §5.6); a space-separated date-time is one single lexical unit, and serializers must always emit the `T` form.
 - The offset suffix is `Z`/`z` (UTC) or `±HH:MM`. Timezone database names are not used; a numeric offset is the only way to express zone information.
 - Seconds range from `00` to `59`; leap seconds are not supported.
@@ -312,19 +341,19 @@ Rules:
 
 ### Block Structure
 
-Every FlexConf document is built from a single abstract block rule, parameterized by the syntax parameters:
+Every FlexConf document is built from a single abstract block rule, parameterized by the four structural tokens:
 
 ```text
-block = LeftBrace *(item ItemSeparator) [item] [ItemSeparator] RightBrace
-item  = key KeyValueSeparator value    ; keyed item
-      / value                          ; anonymous item
+block = LBRACE *(item ITEMSEP) [item] [ITEMSEP] RBRACE
+item  = key KVSEP value    ; keyed item
+      / value              ; anonymous item
 ```
 
 - A block whose items are all **keyed** is a **Map**.
 - A block whose items are all **anonymous** is an **Anonymous Map** (see below).
 - Mixing keyed and anonymous items in the same block is invalid.
-- A trailing `ItemSeparator` after the last item is permitted in the BRACE style.
-- An empty block (e.g. `{}`) is ambiguous and defaults to an empty Map.
+- A trailing `ITEMSEP` after the last item is permitted in the BRACE style.
+- An empty block is an empty Map. It is expressible whenever `LBRACE` and `RBRACE` are literal realizers, and has no representation under `Event(Indent, …)` (§ Event realizers).
 
 ### Collections
 
@@ -353,7 +382,7 @@ server:
   ssl: false
 ```
 
-Note that in the INDENT style the block following a key is delimited by virtual `<INDENT>` / `<DEDENT>` tokens and items are separated by newlines — the abstract block rule is unchanged.
+Note that in the INDENT style the block following a key is delimited by `Event(Indent, Increase)` / `Event(Indent, Decrease)` tokens and items are separated by `Event(Line)` tokens — the abstract block rule is unchanged.
 
 #### Anonymous Maps
 
@@ -389,7 +418,7 @@ protocols:
 **Anonymous map items in the INDENT style**:
 
 - **Scalar items** appear at the block's first indentation level (the *list level*), one value per line.
-- **Map items** are anonymous maps whose key-value pairs sit one indentation level deeper than the list level. This extra indentation level is required: it distinguishes the key-value pairs of a map item from the key-value pairs of the enclosing map. Consequently, when the first content line of an indented block is two indentation levels deeper than its key (two consecutive `<INDENT>` tokens), the block is an anonymous map whose map items occupy the deeper level.
+- **Map items** are anonymous maps whose key-value pairs sit one indentation level deeper than the list level. This extra indentation level is required: it distinguishes the key-value pairs of a map item from the key-value pairs of the enclosing map. Consequently, when the first content line of an indented block is two indentation levels deeper than its key (two consecutive `LBRACE` tokens), the block is an anonymous map whose map items occupy the deeper level.
 - **Adjacent map items are separated by exactly one blank line.** The newline after the last key-value pair ends that pair, and the blank line ends the current map item; the next map item begins at the same deeper indentation level.
 - Scalar items and map items may coexist in the same anonymous map, as shown in the example above.
 
@@ -457,60 +486,70 @@ application:
 
 ### Style Resolution and Surface Detection
 
-The effective configuration of a document is resolved as follows:
+The effective surface of a document is resolved as follows:
 
-1. **Pragma scanning**: The lexer scans the head of the file for pragma directives (§ Pragma Directives) and applies them in order of appearance. `SET STYLE <name>` binds the four structural parameters atomically; subsequent single-parameter `SET` directives override individual parameters.
-2. **Surface detection**: After skipping whitespace and `#` comments, the first non-whitespace, non-comment character is examined:
-   - If `LeftBrace` is bound to a literal and the text at that position starts with it, the document uses the **explicit block surface** (physical braces).
-   - Otherwise the document uses the **indentation surface**, which requires `LeftBrace = <INDENT>`; if the effective configuration does not satisfy this, the document is invalid.
-   - As a backward-compatible convenience, a document with **no pragma directives and no explicit configuration** behaves as if its style were auto-detected: a leading `{` selects BRACE, anything else selects INDENT.
-3. **Immutability**: Once the surface is determined, it cannot change within the document. In the indentation surface, encountering a literal `{` or `}` outside a string is a `SyntaxError` (these are the BRACE style's braces, and styles never mix).
+1. **Pragma scanning**: The lexer scans the head of the file for pragma directives (§ Pragma Directives) and applies them in order of appearance. `SET STYLE <name>` binds the four tokens atomically; subsequent single-token `SET` directives rebind individual tokens.
+2. **Surface selection**: After skipping whitespace and `#` comments, the first token of the document decides:
+   - If that token is `LBRACE` — that is, if the literal realizer of `LBRACE` wins the match at that position (§ Lexical Boundaries) — the document uses the **explicit block surface**.
+   - Otherwise the document uses the **indentation surface**, which requires `LBRACE = <INDENT>`; a document whose effective surface does not satisfy this is invalid.
+   - A document with no pragma block has no declared surface; an implementation may infer one (§ Inferred Surfaces).
+3. **Immutability**: Once selected, the surface cannot change within the document. A character consumed by no token is a `SyntaxError` outside a string (§ Validity Rules).
+
+#### Inferred Surfaces
+
+A document without a pragma block declares nothing about its surface, and its text may leave more than one surface consistent with it. An implementation may infer a surface under three requirements:
+
+- **Candidates.** Inference considers, for every token, at least the two predefined styles and every literal realizer formed by a maximal punctuation run of the document.
+- **Acceptance.** The inferred surface is usable only if every consistent surface yields the same data. When two consistent surfaces yield different data, the document is rejected with an error naming the token and the competing assignments — for example: *`,` is undetermined: `ITEMSEP = ','` reads `[1,2]`, `KVSEP = ','` reads `{"1":2}`; declare one with `#?>`.*
+- **Diagnosis.** When no surface is consistent with the text, the error is reported in the terms of the surface that consumes the longest prefix of the document.
+
+A document intended to be portable should carry a pragma block. Inference is a convenience: its result is not part of the language definition, and a document that parses under an inferred surface is not thereby guaranteed to parse under a different implementation's inference.
 
 ### Whitespace Handling
 
-**General rule**: a whitespace character is syntactically significant if and only if the effective configuration binds it to a syntactic role. Unbound whitespace is meaningless, and lexers skip it between tokens.
+**General rule**: a whitespace character is syntactically significant if and only if the effective surface binds it to a syntactic role. Unbound whitespace is meaningless, and lexers skip it between tokens.
 
-- In the default BRACE style all four structural parameters are literals, so spaces, tabs, and newlines are all insignificant between tokens: documents may be reflowed and aligned freely.
-- `ItemSeparator = <NEWLINE>` makes line endings significant (they *are* the separator), and two consecutive line endings form a blank line, which ends an anonymous map item in the INDENT style.
-- `LeftBrace = <INDENT>` / `RightBrace = <DEDENT>` make the leading whitespace of each line significant (it generates virtual tokens); whitespace within a line remains insignificant.
+- In the default BRACE style all four tokens have literal realizers, so spaces, tabs, and newlines are all insignificant between tokens: documents may be reflowed and aligned freely.
+- `ITEMSEP = <NEWLINE>` makes line endings significant (they *are* the separator), and two consecutive line endings form a blank line, which ends an anonymous map item in the INDENT style.
+- `LBRACE = <INDENT>` / `RBRACE = <DEDENT>` make the leading whitespace of each line significant (it generates event tokens); whitespace within a line remains insignificant.
 - Whitespace inside string values is always significant.
-- Comments run from `#` to the end of the line; comment-only lines produce no tokens. A blank line produces an `ItemSeparator` token when `ItemSeparator = <NEWLINE>`.
+- Comments run from `#` to the end of the line; comment-only lines produce no tokens. A blank line produces an `ITEMSEP` token when `ITEMSEP = <NEWLINE>`.
 
 ### Conversions Between Styles
 
-- Documents in any style can be converted to another style without loss of information, provided the target style can express the same data.
+- Documents in any style can be converted to another style without loss of information, provided the target style can express the same data. An empty block is the case where it cannot: an empty block is expressible whenever `LBRACE` and `RBRACE` are literal realizers, and has no representation when they are `Event(Indent, …)` (§ Event realizers).
 - The conversion must preserve all data and structure.
 - Comments may be relocated but must be preserved.
 
 ### Pragma Directives
 
-Pragmas start with `#?>` and redefine syntax parameters for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, because pragmas are processed before the configuration takes effect.
+Pragmas start with `#?>` and rebind the structural tokens for the current file. The pragma prefix is fixed meta-syntax: it is always `#?>`, because pragmas are processed before the surface takes effect.
 
 Pragmas form a single **pragma block**: a contiguous run of `#?>` lines at the very beginning of the document, preceded only by whitespace, blank lines, or `#` comments. No comment or blank line may appear between two pragma lines — the block ends at the first line that is not a pragma line. Outside a string value, a `#?>` line outside the block is a `SyntaxError`, not a comment. Two directive forms exist:
 
 ```flexconf
-#?> SET STYLE INDENT           " named preset: binds the four structural parameters atomically
+#?> SET STYLE INDENT           " named preset: binds the four tokens atomically
 #?> SET STYLE BRACE            " the default style; may be omitted
-#?> SET ItemSeparator ';'      " single-parameter override
-#?> SET LeftBrace '['
-#?> SET RightBrace ']'
-#?> SET LeftBrace <INDENT>     " symbolic values may also be set individually
+#?> SET ITEMSEP ';'            " single-token override
+#?> SET LBRACE '['
+#?> SET RBRACE ']'
+#?> SET LBRACE <INDENT>        " event realizers may also be set individually
 ```
 
 Rules:
 
 - Directives apply in order of appearance; later directives override earlier ones.
 - The pragma block is contiguous: a comment or blank line between two directives ends it, and any later `#?>` line is a `SyntaxError`.
-- A single-parameter value is either a quoted string or one of the symbolic values `<INDENT>`, `<DEDENT>`, `<NEWLINE>`.
+- A token value is either a quoted string (a literal realizer) or one of the event spellings `<INDENT>`, `<DEDENT>`, `<NEWLINE>`.
 - `STYLE` accepts the style names `BRACE` and `INDENT` (case-sensitive).
-- An unknown parameter name, unknown style name, or illegal value is a `SyntaxError`.
-- All pragmas take effect before surface detection.
+- An unknown token name, unknown style name, or illegal value is a `SyntaxError`.
+- All pragmas take effect before surface selection.
 
 ### Validity Rules
 
 The following conditions make a FlexConf document invalid:
 
-1. **Mixed surfaces**: Using literal block braces in the indentation surface, or more than one surface style in the same document.
+1. **Unbound structural character**: A character consumed by no token — by no realizer, by no reserved symbol, and not as part of a bare lexical run — occurring outside a string (§ Lexical Boundaries).
 2. **Invalid indentation** (INDENT style):
    - Using tabs for indentation
    - Non-uniform indentation levels (not multiples of the base indent unit)
@@ -518,9 +557,9 @@ The following conditions make a FlexConf document invalid:
 4. **Duplicate keys**: A map cannot contain duplicate keys at the same level.
 5. **Incorrect item separation**:
    - In the INDENT style: missing blank lines between anonymous map items, or extra blank lines
-   - In the BRACE style: missing `ItemSeparator` between items
-6. **Unmatched braces**: Every `LeftBrace` (literal or virtual) must have a matching `RightBrace`.
-7. **Invalid configuration**: A pragma or configuration that violates the constraints in § Syntax Parameters (unknown names, conflicting separators, unpaired `<INDENT>`/`<DEDENT>`, ...).
+   - In the BRACE style: missing `ITEMSEP` between items
+6. **Unmatched braces**: Every `LBRACE` must have a matching `RBRACE`.
+7. **Invalid surface**: A pragma or surface that violates the restrictions in § Structural Tokens and Realizers (unknown token names, duplicate literal realizers, an event realizer bound to the wrong token, ...).
 8. **Invalid date/time literal or reserved symbol**: an `@` outside a string that does not introduce a well-formed, calendar-valid date/time literal, or a bare `!` outside a string (§ Dates and Times, § Reserved Words and Symbols).
 9. **Misplaced pragma**: a `#?>` line that is not part of the contiguous pragma block at the beginning of the document (§ Pragma Directives).
 
