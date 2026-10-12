@@ -1,22 +1,22 @@
 # FlexConf ABNF Grammar Specification
 
 *Version 0.0.3-snapshot*
-*Published on November 24, 2025; revised on October 8, 2026*
+*Published on November 24, 2025; revised on October 12, 2026*
 
 ## Introduction
 
 This document provides the formal ABNF (Augmented Backus-Naur Form) grammar for the FlexConf 1.0 specification.
 
-FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Syntax Parameters). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`) and give the **default instantiation** — the BRACE style. Bindings for other styles, including the virtual tokens of the INDENT style, are given in notes and in § Validity Constraints, since indentation analysis cannot be expressed in ABNF. The comment terminal `comment-mark` has the single instantiation `"#"`. The date/time sigil `@` is likewise fixed meta-syntax, independent of all parameters.
+FlexConf has a single unified structural grammar whose surface terminals are **configurable** (see the Language Specification, § Structural Tokens and Realizers). The ABNF rules below are written against parameterized terminals (`lbrace`, `rbrace`, `kv-sep`, `item-sep`), each of which realizes one of the four structural tokens: `lbrace` realizes `LBRACE`, `rbrace` realizes `RBRACE`, `kv-sep` realizes `KVSEP`, and `item-sep` realizes `ITEMSEP`. The rules give the **default instantiation** — the BRACE style. Bindings for other surfaces, including the event realizers of the INDENT style, are given in notes and in § Validity Constraints, since line-structure analysis cannot be expressed in ABNF. The comment terminal `comment-mark` has the single instantiation `"#"`.
 
-## Syntax Parameters and Terminals
+## Tokens and Terminals
 
-| Parameter | ABNF terminal | Default instantiation (BRACE) | INDENT style binding |
+| Token | ABNF terminal | Default instantiation (BRACE) | INDENT style binding |
 | --- | --- | --- | --- |
-| `KeyValueSeparator` | `kv-sep` | `":"` | `":"` |
-| `ItemSeparator` | `item-sep` | `","` | `<NEWLINE>` (virtual) |
-| `LeftBrace` | `lbrace` | `%x7B` (`{`) | `<INDENT>` (virtual) |
-| `RightBrace` | `rbrace` | `%x7D` (`}`) | `<DEDENT>` (virtual) |
+| `KVSEP` | `kv-sep` | `":"` | `":"` |
+| `ITEMSEP` | `item-sep` | `","` | `<NEWLINE>` (event) |
+| `LBRACE` | `lbrace` | `%x7B` (`{`) | `<INDENT>` (event) |
+| `RBRACE` | `rbrace` | `%x7D` (`}`) | `<DEDENT>` (event) |
 
 ```abnf
 ; Default instantiation of the parameterized terminals
@@ -29,7 +29,9 @@ rbrace        = %x7D          ; }
 comment-mark  = "#"
 ```
 
-Symbolic values `<INDENT>`, `<DEDENT>`, and `<NEWLINE>` denote virtual tokens generated from line-structure analysis. When `item-sep` is bound to `<NEWLINE>`, every line ending produces one `item-sep` token, so a blank line produces two consecutive `item-sep` tokens (this ends an anonymous map item, see the Language Specification).
+The event spellings `<INDENT>`, `<DEDENT>`, and `<NEWLINE>` realize a terminal from line-structure analysis rather than from a written string. When `item-sep` is `<NEWLINE>`, every line ending produces one `item-sep` token, so a blank line produces two consecutive `item-sep` tokens (this ends an anonymous map item, see the Language Specification).
+
+**Matching order** is not expressible in ABNF and is fixed by the Language Specification: at each position the candidates are every matching terminal and the bare lexical run beginning there; the longest candidate wins, and on a tie a parameterized terminal wins over the bare lexical run. A literal terminal is therefore never matched inside a bare lexical run, and one terminal may be a prefix of another without ambiguity.
 
 ## Reserved Tokens
 
@@ -37,12 +39,12 @@ In addition to the parameterized terminals, FlexConf has a fixed vocabulary that
 
 | Terminal | Instantiation | Constraints |
 | --- | --- | --- |
-| `comment-mark` | `"#"` | No literal parameter value may equal `"#"` or share a prefix with it. |
-| pragma prefix | `"#?>"` | Part of a contiguous pragma block at the head of the document, before surface detection; outside a string, a `#?>` line outside that block is a syntax error, not a comment. |
-| date/time sigil | `"@"` | No literal parameter value may contain it; outside strings, every `@` must open a well-formed `date-time`. |
-| reserved sigil | `"!"` | Reserved for future use and given no production; no literal parameter value may contain it, and a bare `!` outside a string is a syntax error. |
+| `comment-mark` | `"#"` | No literal realizer may equal `"#"` or share a prefix with it. |
+| pragma prefix | `"#?>"` | Part of a contiguous pragma block at the head of the document, before surface selection; outside a string, a `#?>` line outside that block is a syntax error, not a comment. |
+| date/time sigil | `"@"` | No literal realizer may contain it; outside strings, every `@` must open a well-formed `date-time`. |
+| reserved sigil | `"!"` | Reserved for future use and given no production; no literal realizer may contain it, and a bare `!` outside a string is a syntax error. |
 
-The pragma prefix, the date/time sigil, and the reserved `!` are not ABNF rules of the parameterized grammar; they are consumed by the lexer before and around it, which is what makes them fixed. The reserved symbols are **lexically active at both ends of a token**: the string delimiters, `` ` ``, `comment-mark`, `@`, and `!` all terminate a bare lexical run, so none of them can be absorbed into an identifier (`a'b`, `a@b`, `a!b`, and so on are syntax errors). The pragma vocabulary itself (`SET`, `STYLE`, `BRACE`, `INDENT`, `KeyValueSeparator`, `ItemSeparator`, `LeftBrace`, `RightBrace`, `<INDENT>`, `<DEDENT>`, `<NEWLINE>`) is reserved **only** inside a `pragma-line`; elsewhere those words are ordinary `bare-key`s.
+The pragma prefix, the date/time sigil, and the reserved `!` are not ABNF rules of the parameterized grammar; they are consumed by the lexer before and around it, which is what makes them fixed. The reserved symbols are **lexically active at both ends of a token**: the string delimiters, `` ` ``, `comment-mark`, `@`, and `!` all terminate a bare lexical run, so none of them can be absorbed into an identifier (`a'b`, `a@b`, `a!b`, and so on are syntax errors). The pragma vocabulary itself (`SET`, `STYLE`, `BRACE`, `INDENT`, `KVSEP`, `ITEMSEP`, `LBRACE`, `RBRACE`, `<INDENT>`, `<DEDENT>`, `<NEWLINE>`) is reserved **only** inside a `pragma-line`; elsewhere those words are ordinary `bare-key`s.
 
 Bare literals with a built-in type are reserved words rather than identifiers:
 
@@ -75,13 +77,13 @@ NEWLINE     = LF / CRLF
 WS          = SP / HTAB              ; inline whitespace
 ```
 
-**Whitespace rule (parameterized)**: whitespace that is not bound to a syntactic role by the effective configuration is insignificant and skipped between tokens. In the default instantiation:
+**Whitespace rule (parameterized)**: whitespace that is not bound to a syntactic role by the effective surface is insignificant and skipped between tokens. In the default instantiation:
 
 ```abnf
 WSP         = *(WS / NEWLINE)        ; BRACE style: all whitespace skippable
 ```
 
-When `item-sep` is bound to `<NEWLINE>`, line endings are significant and must be excluded: `WSP = *WS`. When `lbrace` is bound to `<INDENT>`, the leading whitespace of each line is additionally significant (it generates virtual tokens) and is excluded from `WSP` at line start.
+When `item-sep` is bound to `<NEWLINE>`, line endings are significant and must be excluded: `WSP = *WS`. When `lbrace` is bound to `<INDENT>`, the leading whitespace of each line is additionally significant (it generates event tokens) and is excluded from `WSP` at line start.
 
 ## Document Structure
 
@@ -144,12 +146,12 @@ anonymous-item = value
 - Mixing `keyed-item` and `anonymous-item` in one block is invalid (see § Validity Constraints).
 - The trailing `item-sep` is optional (permitted in the BRACE style).
 
-**INDENT style specializations** (virtual-token instantiation, not expressible in pure ABNF):
+**Event-realizer specializations** (not expressible in pure ABNF):
 
-- `lbrace` / `rbrace` are `<INDENT>` / `<DEDENT>` tokens; `item-sep` is `<NEWLINE>`.
-- Two consecutive `<INDENT>` tokens open an anonymous map whose map items sit one indentation level deeper than its scalar items.
+- `lbrace` / `rbrace` are the `<INDENT>` / `<DEDENT>` events; `item-sep` is `<NEWLINE>`.
+- Two consecutive `<INDENT>` events open an anonymous map whose map items sit one indentation level deeper than its scalar items — the block opens with two consecutive `LBRACE` tokens.
 - Two consecutive `item-sep` tokens (a blank line) end the current anonymous map item.
-- In the BRACE style, an anonymous map of maps appears as double braces: the outer `lbrace` opens the anonymous map, each inner `block` is one map item.
+- An anonymous map of maps opens with two consecutive `LBRACE` tokens in every surface: with literal `lbrace` / `rbrace` it is written as double braces (`{{ … }}`), with the INDENT events as a double indent.
 
 ## String Types
 
@@ -231,14 +233,15 @@ The date/time literal is a single lexical unit: the `@` sigil and the entire dat
 
 The following constraints are not directly expressible in ABNF but must be enforced:
 
-1. **Configuration Constraints**:
-   - The literal values of the four structural parameters are pairwise distinct and conflict-free with `comment-mark` (`"#"`).
-   - No literal parameter value may contain `@` (reserved for date/time literals) or `!` (reserved for future use).
-   - `<INDENT>` / `<DEDENT>` are bound as a pair to `lbrace` / `rbrace`.
+1. **Realizer Constraints**:
+   - The literal realizers of a document are pairwise distinct, and none equals `comment-mark` (`"#"`) or shares a prefix with it.
+   - No literal realizer may contain `@` (reserved for date/time literals) or `!` (reserved for future use).
+   - `<INDENT>` / `<DEDENT>` are bound as a pair to `lbrace` / `rbrace`, and no other event spelling is bound to those terminals.
 
-2. **Style and Surface Constraints**:
-   - A document uses exactly one surface style; literal braces must not appear in the indentation surface (outside strings).
-   - In the explicit surface, all braces must be properly matched and nested.
+2. **Surface Constraints**:
+   - A document uses exactly one surface.
+   - A character that no realizer binds is a syntax error outside string values.
+   - In an explicit surface, all braces must be properly matched and nested.
 
 3. **INDENT Style (Virtual Token) Constraints**:
    - Tabs must not be used for indentation.

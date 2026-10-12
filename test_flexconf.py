@@ -170,9 +170,9 @@ server:
   port: 8080
 ''', expected={'server': {'host': 'localhost', 'port': 8080}})
 
-# 15. Custom ItemSeparator ';' in the BRACE style, with free multi-line
+# 15. Custom ITEMSEP ';' in the BRACE style, with free multi-line
 #     layout (whitespace is insignificant unless bound, Language SPEC)
-check("pragma ItemSeparator ';'", '''#?> SET ItemSeparator ';'
+check("pragma ITEMSEP ';'", '''#?> SET ITEMSEP ';'
 {
   a: 1;
   b: {
@@ -182,13 +182,13 @@ check("pragma ItemSeparator ';'", '''#?> SET ItemSeparator ';'
 }
 ''', expected={'a': 1, 'b': {'x': True, 'y': 2}})
 
-# 16. Custom LeftBrace/RightBrace '[' ']' + surface detection on '['
-check("pragma LeftBrace '[' RightBrace ']'", '''#?> SET LeftBrace '['
-#?> SET RightBrace ']'
+# 16. Custom LBRACE/RBRACE '[' ']' + surface selection on '['
+check("pragma LBRACE '[' RBRACE ']'", '''#?> SET LBRACE '['
+#?> SET RBRACE ']'
 [ a: 1, b: [ 1, 2 ] ]
 ''', expected={'a': 1, 'b': [1, 2]})
 
-# 17. API-level config: KeyValueSeparator '=' in the explicit surface
+# 17. API-level config: KVSEP '=' in the explicit surface
 check("API Config(key_value_separator='=')",
       "{a = 1}", config=flexconf.Config(key_value_separator='='),
       expected={'a': 1})
@@ -201,7 +201,7 @@ check("API style_indent(key_value_separator='=')",
 # 18. Comments start with '#'
 check("CommentMarker pragma rejected",
       "#?> SET CommentMarker '//'\n{}\n",
-      expect_error="Unknown pragma parameter 'CommentMarker'")
+      expect_error="Unknown pragma token 'CommentMarker'")
 check("'//' is not a comment", "{ a: 1 // oops\n}\n",
       expect_error="Expected COLON")
 
@@ -220,19 +220,19 @@ def check_raises(name, fn, expect_error):
             print(f"FAIL  {name}: unexpected {type(e).__name__}: {e}")
             failed += 1
 
-check_raises("Config conflict: ItemSeparator ':' vs KeyValueSeparator ':'",
+check_raises("Config conflict: ITEMSEP ':' vs KVSEP ':'",
              lambda: flexconf.Config(item_separator=':'),
              "Invalid configuration")
 check_raises("Config conflict: unpaired <INDENT>",
              lambda: flexconf.Config(left_brace=flexconf.INDENT),
              "Invalid configuration")
-check_raises("Config conflict: ItemSeparator conflicts with the comment marker",
+check_raises("Config conflict: ITEMSEP conflicts with the comment marker",
              lambda: flexconf.Config(item_separator='#'),
              "Invalid configuration")
 check("unknown style name rejected", "#?> SET STYLE YAML\n{}\n",
       expect_error="Unknown style 'YAML'")
 check("indent doc rejected when pragmas declare literal braces",
-      "#?> SET ItemSeparator ';'\nserver:\n  a: 1\n",
+      "#?> SET ITEMSEP ';'\nserver:\n  a: 1\n",
       expect_error="SET STYLE INDENT")
 
 # 20. Date/time literals: '@' sigil, RFC 3339 profile (Language SPEC:
@@ -303,10 +303,10 @@ check_raises("Config conflict: '!' inside a separator",
 
 # 23. The pragma block must be contiguous at the very start of the document
 check("comment between pragmas is rejected",
-      "#?> SET STYLE INDENT\n# note\n#?> SET KeyValueSeparator '='\na = 1\n",
+      "#?> SET STYLE INDENT\n# note\n#?> SET KVSEP '='\na = 1\n",
       expect_error="contiguous block")
 check("blank line between pragmas is rejected",
-      "#?> SET STYLE INDENT\n\n#?> SET KeyValueSeparator '='\na = 1\n",
+      "#?> SET STYLE INDENT\n\n#?> SET KVSEP '='\na = 1\n",
       expect_error="contiguous block")
 check("pragma after data is rejected",
       "a: 1\n#?> SET STYLE INDENT\n",
@@ -315,10 +315,10 @@ check("pragma after the block before data is rejected",
       "#?> SET STYLE INDENT\n# note\n#?> SET STYLE BRACE\n{\n}\n",
       expect_error="contiguous block")
 check("leading comment before the pragma block is allowed",
-      "# note\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      "# note\n#?> SET ITEMSEP ';'\n{ a: 1; b: 2 }\n",
       expected={'a': 1, 'b': 2})
 check("blank lines before the pragma block are allowed",
-      "\n\n#?> SET ItemSeparator ';'\n{ a: 1; b: 2 }\n",
+      "\n\n#?> SET ITEMSEP ';'\n{ a: 1; b: 2 }\n",
       expected={'a': 1, 'b': 2})
 check("blank line after the pragma block is allowed",
       "#?> SET STYLE INDENT\n\nserver:\n  host: \"a\"\n",

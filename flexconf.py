@@ -2,14 +2,14 @@
 
 FlexConf has a single unified structural model (Language SPEC: Block
 Structure) whose surface syntax is governed by four configurable
-parameters — KeyValueSeparator, ItemSeparator, LeftBrace, RightBrace —
+parameters — KVSEP, ITEMSEP, LBRACE, RBRACE —
 plus two named style presets, BRACE (default) and INDENT. Comments are
 introduced by '#'.
 
 The lexer normalizes both surfaces into one token stream: in the
-indentation surface, INDENT/DEDENT tokens are the virtual LeftBrace/
-RightBrace (<INDENT>/<DEDENT>) and NEWLINE tokens are the virtual
-ItemSeparator (<NEWLINE>). The parser is surface-agnostic.
+indentation surface, INDENT/DEDENT tokens are the virtual LBRACE/
+RBRACE (<INDENT>/<DEDENT>) and NEWLINE tokens are the virtual
+ITEMSEP (<NEWLINE>). The parser is surface-agnostic.
 
 Pipeline: Lexer (pragma scan -> style/surface resolution -> tokenize)
 -> Parser (unified block parsing) -> Interpreter (native types).
@@ -25,11 +25,11 @@ from typing import Any
 
 # --- Configuration & Constants ---
 
-# Symbolic parameter values (Language SPEC: Syntax Parameters). These denote
-# virtual tokens generated from line-structure analysis, not literal text.
-INDENT = '<INDENT>'    # one indentation level deeper   (virtual LeftBrace)
-DEDENT = '<DEDENT>'    # one indentation level shallower (virtual RightBrace)
-NEWLINE = '<NEWLINE>'  # line ending                    (virtual ItemSeparator)
+# Event realizer spellings (Language SPEC: Structural Tokens and Realizers).
+# These denote tokens generated from line-structure analysis, not literal text.
+INDENT = '<INDENT>'    # one indentation level deeper   (virtual LBRACE)
+DEDENT = '<DEDENT>'    # one indentation level shallower (virtual RBRACE)
+NEWLINE = '<NEWLINE>'  # line ending                    (virtual ITEMSEP)
 
 SYMBOLIC_VALUES = (INDENT, DEDENT, NEWLINE)
 
@@ -83,12 +83,12 @@ def _parse_datetime_body(m: re.Match):
         body += 'Z' if offset in ('Z', 'z') else offset
     return datetime.fromisoformat(body)
 
-# Pragma parameter names -> Config fields (Language SPEC: Pragma Directives)
+# Pragma token names -> Config fields (Language SPEC: Pragma Directives)
 PARAM_FIELDS = {
-    'KeyValueSeparator': 'key_value_separator',
-    'ItemSeparator': 'item_separator',
-    'LeftBrace': 'left_brace',
-    'RightBrace': 'right_brace',
+    'KVSEP': 'key_value_separator',
+    'ITEMSEP': 'item_separator',
+    'LBRACE': 'left_brace',
+    'RBRACE': 'right_brace',
 }
 
 STYLE_PRESETS = {
@@ -113,7 +113,7 @@ class Config:
     INDENT preset; both accept field overrides, e.g.
     Config.style_indent(key_value_separator='=').
 
-    Validation (Language SPEC: Syntax Parameters) runs at construction:
+    Validation (Language SPEC: Structural Tokens and Realizers) runs at construction:
     conflicting or otherwise illegal configurations raise FlexConfError
     before any parsing takes place.
     """
@@ -139,26 +139,26 @@ class Config:
         kv, sep, lb, rb = (self.key_value_separator, self.item_separator,
                            self.left_brace, self.right_brace)
 
-        # Symbolic value placement (Language SPEC: Syntax Parameters)
+        # Symbolic value placement (Language SPEC: Structural Tokens and Realizers)
         if kv in SYMBOLIC_VALUES:
-            fail("KeyValueSeparator must be a literal string")
+            fail("KVSEP must be a literal string")
         if sep in (INDENT, DEDENT):
-            fail(f"ItemSeparator cannot be bound to '{sep}'")
+            fail(f"ITEMSEP cannot be bound to '{sep}'")
         if lb in (DEDENT, NEWLINE):
-            fail(f"LeftBrace cannot be bound to '{lb}'")
+            fail(f"LBRACE cannot be bound to '{lb}'")
         if rb in (INDENT, NEWLINE):
-            fail(f"RightBrace cannot be bound to '{rb}'")
+            fail(f"RBRACE cannot be bound to '{rb}'")
         if (lb == INDENT) != (rb == DEDENT):
             fail("<INDENT>/<DEDENT> must be bound as a pair to "
-                 "LeftBrace/RightBrace")
+                 "LBRACE/RBRACE")
 
         # Literal separators: pairwise distinct, prefix-free, no conflicts
-        literals = {'KeyValueSeparator': kv}
+        literals = {'KVSEP': kv}
         if sep != NEWLINE:
-            literals['ItemSeparator'] = sep
+            literals['ITEMSEP'] = sep
         if lb != INDENT:
-            literals['LeftBrace'] = lb
-            literals['RightBrace'] = rb
+            literals['LBRACE'] = lb
+            literals['RBRACE'] = rb
 
         seen = []
         for name, v in literals.items():
@@ -184,10 +184,10 @@ class Config:
 
         # Reference-implementation limit (the SPEC allows this combination,
         # but blank-line separation of anonymous map items is only defined
-        # for ItemSeparator=<NEWLINE>, which this implementation requires).
+        # for ITEMSEP=<NEWLINE>, which this implementation requires).
         if lb == INDENT and sep != NEWLINE:
-            fail("this implementation requires ItemSeparator=<NEWLINE> "
-                 "when LeftBrace=<INDENT> (the INDENT style)")
+            fail("this implementation requires ITEMSEP=<NEWLINE> "
+                 "when LBRACE=<INDENT> (the INDENT style)")
 
 
 class TokenType(Enum):
@@ -200,15 +200,15 @@ class TokenType(Enum):
     IDENTIFIER = auto()
 
     # Structure (unified vocabulary; the lexer normalizes both surfaces)
-    LBRACE = auto()        # literal LeftBrace
-    RBRACE = auto()        # literal RightBrace
-    COLON = auto()         # KeyValueSeparator (any literal value)
-    COMMA = auto()         # literal ItemSeparator (any literal value)
-    NEWLINE = auto()       # virtual ItemSeparator (<NEWLINE>)
+    LBRACE = auto()        # literal LBRACE
+    RBRACE = auto()        # literal RBRACE
+    COLON = auto()         # KVSEP (any literal value)
+    COMMA = auto()         # literal ITEMSEP (any literal value)
+    NEWLINE = auto()       # virtual ITEMSEP (<NEWLINE>)
 
     # Virtual braces of the indentation surface
-    INDENT = auto()        # virtual LeftBrace  (<INDENT>)
-    DEDENT = auto()        # virtual RightBrace (<DEDENT>)
+    INDENT = auto()        # virtual LBRACE  (<INDENT>)
+    DEDENT = auto()        # virtual RBRACE (<DEDENT>)
 
     EOF = auto()
 
@@ -290,7 +290,7 @@ class Lexer:
         elif target in PARAM_FIELDS:
             values[PARAM_FIELDS[target]] = self._parse_pragma_value(arg, line)
         else:
-            raise FlexConfError(f"Unknown pragma parameter '{target}'", line, 1)
+            raise FlexConfError(f"Unknown pragma token '{target}'", line, 1)
 
     def _parse_pragma_value(self, arg: str, line: int):
         if arg.startswith('<') and arg.endswith('>'):
@@ -333,7 +333,7 @@ class Lexer:
         line = self.text.count('\n', 0, p) + 1
         col = p - self.text.rfind('\n', 0, p)
         raise FlexConfError(
-            f"Document does not start with LeftBrace {self.config.left_brace!r}; "
+            f"Document does not start with LBRACE {self.config.left_brace!r}; "
             "use '#?> SET STYLE INDENT' for the indentation surface", line, col)
 
     # -- Tokenization -------------------------------------------------------
@@ -473,7 +473,7 @@ class Lexer:
         return False
 
     def _flush_blanks(self, n):
-        # A blank line emits a NEWLINE (virtual ItemSeparator) token
+        # A blank line emits a NEWLINE (virtual ITEMSEP) token
         # (Parser SPEC 3.4)
         for _ in range(n):
             self.tokens.append(Token(TokenType.NEWLINE, '\n', self.line, 1))
@@ -596,7 +596,7 @@ class Lexer:
 
         # Date/time literal (Language SPEC: Dates and Times). The sigil is
         # fixed meta-syntax; the body is one atomic lexeme, so its ':'
-        # characters never interact with the KeyValueSeparator.
+        # characters never interact with the KVSEP.
         if char == DATETIME_SIGIL:
             return self._parse_datetime()
 
@@ -740,14 +740,14 @@ class Parser:
     The lexer has already normalized both surfaces into the unified token
     vocabulary, so a single block-parsing procedure handles every style:
     INDENT/DEDENT are the virtual braces of the indentation surface,
-    NEWLINE is the virtual ItemSeparator of ItemSeparator=<NEWLINE>.
+    NEWLINE is the virtual ITEMSEP of ITEMSEP=<NEWLINE>.
     """
 
     def __init__(self, tokens: list[Token], config: Config):
         self.tokens = tokens
         self.pos = 0
         # Token type that separates items (Parser SPEC 3.3): COMMA carries
-        # any literal ItemSeparator, NEWLINE carries <NEWLINE>.
+        # any literal ITEMSEP, NEWLINE carries <NEWLINE>.
         self.item_sep = (TokenType.NEWLINE if config.item_separator == NEWLINE
                          else TokenType.COMMA)
 
@@ -877,7 +877,7 @@ class Parser:
             if self.peek().type == separator_token:
                 self.consume()
             elif self.peek().type != end_token:
-                # The Language SPEC requires an ItemSeparator between items;
+                # The Language SPEC requires an ITEMSEP between items;
                 # the reference parser is lenient here and lets the next
                 # loop iteration continue the parse.
                 pass
@@ -1028,7 +1028,7 @@ list_example:
 
         # Test pragma-driven customization
         custom_code = """
-#?> SET ItemSeparator ';'
+#?> SET ITEMSEP ';'
 {
     server: {
         host: "localhost";  # semicolons and # comments
